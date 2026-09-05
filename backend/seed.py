@@ -219,7 +219,8 @@ NOTIFICATION_TEMPLATES = [
         "Stock transfer dispatched: {category_name}",
         "{released_by} dispatched {quantity} unit(s) of {category_name} "
         "from {from_warehouse} to {to_warehouse}.\n\nExpected delivery: {expected_delivery_date}.",
-        None,
+        "Transfer dispatched: {quantity}x {category_name} {from_warehouse}->{to_warehouse} by "
+        "{released_by}. Due {expected_delivery_date}.",
     ),
     (
         "inventory.transfer_received",
