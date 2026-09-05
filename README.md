@@ -613,6 +613,17 @@ Recipients without a phone number on file (the two System Administrator
 accounts) correctly get email only — that's existing, unrelated behavior
 (SMS only goes to a phone if one is on file), not a gap in this fix.
 
+## Verified working (2026-09-05) — login page watermark
+
+Added a decorative background to `LoginPage.tsx`: a repeating, low-opacity
+white SVG pattern (delivery truck, crate, route pin, manifest, a satellite-
+ping nod to Starlink kits) tiled across the branded dark-blue background,
+with a subtle vignette so it recedes near the card. Purely visual — no
+functional change. Confirmed live on desktop and at a 375px mobile
+viewport: the pattern tiles cleanly at both sizes, stays subtle enough not
+to compete with the card, and the page still functions (logged in/out
+normally).
+
 ## Local (non-Docker) frontend dev
 
 ```bash
