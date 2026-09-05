@@ -555,6 +555,35 @@ passing `window.location.origin` as the constructor's base (harmless when
 the frontend image and logging in through the actual production login
 form — landed on the Dashboard as System Administrator.
 
+## Verified working (2026-09-05) — self-service password change, admin password reset, account deletion
+
+- Settings was gated to System Administrators only in both the sidebar
+  nav item and implicitly (no other user could reach the page), so no
+  non-admin had any way to change their own password — the backend
+  endpoint (`POST /users/me/change-password`) existed already but nothing
+  in the frontend called it. Un-gated the nav item; the notification-
+  config placeholder card stays admin-only inside the page.
+- Tested self-service change password against the live bootstrap admin
+  account through the actual Settings UI: changed the password, saw
+  "Password updated.", then changed it back to the documented one so
+  existing credentials stay valid.
+- Admin password reset (`POST /users/{id}/reset-password`, System
+  Administrator only): created a throwaway test account, reset its
+  password through the actual Users page dialog — got a random temporary
+  password back, shown once, plus an emailed copy via the same templated-
+  notification pipeline as every other system event (new `user.password_reset`
+  template, seeded idempotently like the rest — re-running `seed.py` added
+  it without touching existing data).
+- Account deletion (`DELETE /users/{id}`, System Administrator only):
+  verified both outcomes for real. Deleting the freshly-reset test account
+  fell back to deactivation ("This account has history... tied to it") —
+  correct, since the password-reset notification had already created a
+  `Notification` row referencing it. Deleting a second, completely
+  untouched test account fully removed it ("User account deleted.").
+  Real accounts with any activity (assets, transactions, audit trail) will
+  always deactivate rather than hard-delete — those records must never
+  silently disappear or get nulled out.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
