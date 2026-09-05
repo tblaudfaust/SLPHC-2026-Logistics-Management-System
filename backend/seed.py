@@ -3,9 +3,9 @@
 Seeds the permission catalogue, the 14 roles from brief §4 with a starting
 (read-heavy, refine later) permission grant per role, Sierra Leone's real
 region/district hierarchy, the brief §3 asset category catalogue, a
-District Office warehouse for each of the 16 districts and a Regional
-Store warehouse for each of the 5 regions, and one bootstrap System
-Administrator user.
+District Office warehouse for each of the 16 districts, a Regional Store
+warehouse for each of the 5 regions, the national Freetown Central Store,
+and one bootstrap System Administrator user.
 
 Usage: python seed.py  (inside the backend container / venv)
 """
@@ -116,10 +116,12 @@ REGIONS_DISTRICTS = {
 
 DISTRICT_OFFICE_TYPE = "District Office"
 REGIONAL_STORE_TYPE = "Regional Store"
+CENTRAL_STORE_TYPE = "Central Store"
 
 LOCATION_TYPES = [
     (DISTRICT_OFFICE_TYPE, "District-level logistics store/office"),
     (REGIONAL_STORE_TYPE, "Regional-level logistics store"),
+    (CENTRAL_STORE_TYPE, "National central logistics store"),
 ]
 
 # Asset category catalogue from brief §3 — database-driven, admins can add
@@ -333,6 +335,17 @@ def run() -> None:
                 db.flush()
             if not db.query(Warehouse).filter_by(location_id=location.id).one_or_none():
                 db.add(Warehouse(location_id=location.id, code=f"{region.code}-RS"))
+
+        central_store_type = db.query(LocationType).filter_by(name=CENTRAL_STORE_TYPE).one()
+        freetown = db.query(District).filter_by(code="WAU").one()
+        location_name = "Freetown-Central-Store"
+        location = db.query(Location).filter_by(name=location_name).one_or_none()
+        if not location:
+            location = Location(location_type_id=central_store_type.id, district_id=freetown.id, name=location_name)
+            db.add(location)
+            db.flush()
+        if not db.query(Warehouse).filter_by(location_id=location.id).one_or_none():
+            db.add(Warehouse(location_id=location.id, code="FT-CS", is_central=True))
 
         db.commit()
 
