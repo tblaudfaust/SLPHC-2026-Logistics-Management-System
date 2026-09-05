@@ -2,8 +2,10 @@
 
 Seeds the permission catalogue, the 14 roles from brief §4 with a starting
 (read-heavy, refine later) permission grant per role, Sierra Leone's real
-region/district hierarchy, the brief §3 asset category catalogue, and one
-bootstrap System Administrator user.
+region/district hierarchy, the brief §3 asset category catalogue, a
+District Office warehouse for each of the 16 districts and a Regional
+Store warehouse for each of the 5 regions, and one bootstrap System
+Administrator user.
 
 Usage: python seed.py  (inside the backend container / venv)
 """
@@ -12,10 +14,11 @@ from app.core.security import hash_password
 from app.db.base import Base  # noqa: F401  (ensures all models are registered)
 from app.db.session import SessionLocal
 from app.models.asset import AssetCategory
-from app.models.location import District, Region
+from app.models.location import District, Location, LocationType, Region
 from app.models.notification import NotificationTemplate
 from app.models.rbac import Permission, Role
 from app.models.user import User
+from app.models.warehouse import Warehouse
 
 PERMISSIONS = [
     ("users.view", "users", "View user accounts"),
@@ -110,6 +113,14 @@ REGIONS_DISTRICTS = {
     ],
     ("Eastern Province", "EP"): [("Kailahun", "KAI"), ("Kenema", "KEN"), ("Kono", "KNO")],
 }
+
+DISTRICT_OFFICE_TYPE = "District Office"
+REGIONAL_STORE_TYPE = "Regional Store"
+
+LOCATION_TYPES = [
+    (DISTRICT_OFFICE_TYPE, "District-level logistics store/office"),
+    (REGIONAL_STORE_TYPE, "Regional-level logistics store"),
+]
 
 # Asset category catalogue from brief §3 — database-driven, admins can add
 # more later. (name, code_prefix, tracking_type)
@@ -288,6 +299,40 @@ def run() -> None:
                         sms_body_template=sms_body_template,
                     )
                 )
+
+        db.commit()
+
+        for type_name, description in LOCATION_TYPES:
+            if not db.query(LocationType).filter_by(name=type_name).one_or_none():
+                db.add(LocationType(name=type_name, description=description))
+        db.commit()
+
+        district_office_type = db.query(LocationType).filter_by(name=DISTRICT_OFFICE_TYPE).one()
+        regional_store_type = db.query(LocationType).filter_by(name=REGIONAL_STORE_TYPE).one()
+
+        for district in db.query(District).all():
+            location_name = f"{district.name.replace(' ', '-')}-District-Office"
+            location = db.query(Location).filter_by(name=location_name).one_or_none()
+            if not location:
+                location = Location(
+                    location_type_id=district_office_type.id, district_id=district.id, name=location_name,
+                )
+                db.add(location)
+                db.flush()
+            if not db.query(Warehouse).filter_by(location_id=location.id).one_or_none():
+                db.add(Warehouse(location_id=location.id, code=f"{district.code}-DO"))
+
+        for region in db.query(Region).all():
+            location_name = f"{region.name.replace(' ', '-')}-Store"
+            location = db.query(Location).filter_by(name=location_name).one_or_none()
+            if not location:
+                location = Location(
+                    location_type_id=regional_store_type.id, region_id=region.id, name=location_name,
+                )
+                db.add(location)
+                db.flush()
+            if not db.query(Warehouse).filter_by(location_id=location.id).one_or_none():
+                db.add(Warehouse(location_id=location.id, code=f"{region.code}-RS"))
 
         db.commit()
 
