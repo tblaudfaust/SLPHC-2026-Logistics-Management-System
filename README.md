@@ -598,6 +598,21 @@ the live Locations & Warehouses page: all 21 appear, correctly scoped
 displays as "Central" scope, taking priority over its district in the
 existing scope-derivation logic.
 
+## Fixed (2026-09-05) — no SMS on stock transfer dispatch
+
+`inventory.transfer_dispatched` had `sms_body_template = None` — only
+`asset.status_critical` and `inventory.transfer_overdue` were originally
+treated as urgent enough for SMS, but dispatch is time-sensitive for
+warehouse/district staff who don't always check email. Added an SMS
+template (seed.py, plus a one-time direct SQL update since seed.py only
+inserts templates that don't already exist and this one was already
+seeded). Verified live: dispatched a real transfer and the Notifications
+delivery log showed 3 SMS rows (to every recipient with `inventory.reconcile`
+and a phone on file) all `SENT`, alongside the existing email rows.
+Recipients without a phone number on file (the two System Administrator
+accounts) correctly get email only — that's existing, unrelated behavior
+(SMS only goes to a phone if one is on file), not a gap in this fix.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
