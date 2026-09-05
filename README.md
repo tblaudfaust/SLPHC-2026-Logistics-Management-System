@@ -538,6 +538,23 @@ docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
   valid access token and sets `slphc_refresh_token` with
   `HttpOnly; Secure; SameSite=lax`.
 
+## Fixed (2026-09-05) — login broken in production despite correct credentials
+
+`curl` against `/api/auth/login` worked, but the actual login page showed
+"Unable to reach the server" for the correct bootstrap admin password.
+Root cause: `frontend/src/lib/api.ts`'s `buildUrl()` called
+`new URL(BASE_URL + path)` with no base argument. `VITE_API_BASE_URL` is
+baked in as the relative path `/api` in production (so one build works on
+any origin) — the `URL` constructor, unlike `fetch()`, does not resolve a
+relative string against the page's own origin and throws
+`TypeError: Invalid URL` instead. That exception isn't an `ApiError`, so
+the login form's catch-all reported it as an unreachable server — every
+`apiRequest` call, not just login, was silently broken this way. Fixed by
+passing `window.location.origin` as the constructor's base (harmless when
+`BASE_URL` is already absolute, as in local dev). Verified by rebuilding
+the frontend image and logging in through the actual production login
+form — landed on the Dashboard as System Administrator.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
