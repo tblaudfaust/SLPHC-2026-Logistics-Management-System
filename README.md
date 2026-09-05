@@ -584,6 +584,17 @@ form — landed on the Dashboard as System Administrator.
   always deactivate rather than hard-delete — those records must never
   silently disappear or get nulled out.
 
+## Verified working (2026-09-05) — district and regional store warehouses
+
+Seeded (via `seed.py`, idempotent — matched by name) a `Warehouse` for
+every one of the 16 districts and 5 regions: two new `LocationType` rows
+(District Office, Regional Store), a `Location` per district/region named
+`<Name>-District-Office` / `<Name>-Store` (spaces to hyphens, e.g.
+`Bo-District-Office`, `Eastern-Province-Store`), and a `Warehouse` row for
+each with a short code (district/region code + `-DO`/`-RS`). Confirmed on
+the live Locations & Warehouses page: all 21 appear, correctly scoped
+(District/Regional) and Active.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
