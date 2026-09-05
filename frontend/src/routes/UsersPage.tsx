@@ -417,12 +417,14 @@ function UserPermissionsDialog({ user, onClose }: { user: UserRecord; onClose: (
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const overrides = (permissionsQuery.data ?? []).flatMap((perm) => {
-        const wants = effectiveCodes.has(perm.code);
-        if (wants && !perm.from_role) return [{ permission_id: perm.id, effect: "GRANT" as const }];
-        if (!wants && perm.from_role) return [{ permission_id: perm.id, effect: "REVOKE" as const }];
-        return [];
-      });
+      const overrides = (permissionsQuery.data ?? []).flatMap(
+        (perm): { permission_id: string; effect: "GRANT" | "REVOKE" }[] => {
+          const wants = effectiveCodes.has(perm.code);
+          if (wants && !perm.from_role) return [{ permission_id: perm.id, effect: "GRANT" }];
+          if (!wants && perm.from_role) return [{ permission_id: perm.id, effect: "REVOKE" }];
+          return [];
+        },
+      );
       return api.put(`/users/${user.id}/permissions`, { overrides });
     },
     onSuccess: () => {
