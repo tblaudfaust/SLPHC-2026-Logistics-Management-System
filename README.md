@@ -593,7 +593,10 @@ every one of the 16 districts and 5 regions: two new `LocationType` rows
 `Bo-District-Office`, `Eastern-Province-Store`), and a `Warehouse` row for
 each with a short code (district/region code + `-DO`/`-RS`). Confirmed on
 the live Locations & Warehouses page: all 21 appear, correctly scoped
-(District/Regional) and Active.
+(District/Regional) and Active. Also added the national `Freetown-Central-Store`
+(code `FT-CS`, `is_central=True`, in Western Area Urban district) —
+displays as "Central" scope, taking priority over its district in the
+existing scope-derivation logic.
 
 ## Local (non-Docker) frontend dev
 
