@@ -3,6 +3,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, Warehouse as WarehouseIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { Link } from "react-router-dom";
 import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
@@ -170,6 +171,14 @@ export function UsersPage() {
                       <Button variant="destructive" onClick={() => setDeletingUser(u)}>
                         <Trash2 size={14} /> Delete
                       </Button>
+                    )}
+                    {isSystemAdmin && u.id === currentUser?.id && (
+                      <Link
+                        to="/settings"
+                        className="inline-flex items-center self-center text-xs text-slate-500 underline hover:text-slate-700"
+                      >
+                        Change your own password in Settings
+                      </Link>
                     )}
                   </div>
                 </TableCell>
