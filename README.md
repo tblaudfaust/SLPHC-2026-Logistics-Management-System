@@ -479,6 +479,65 @@ Extended the same fix from goods receipt to both legs of a stock transfer:
   the Transfers list showed "System Administrator / System Administrator"
   for both legs, not free text (`tsc --noEmit` clean)
 
+## Production deployment (Hostinger VPS)
+
+Live at `https://sl-logistics-ops.statistics.sl`, deployed on a Hostinger
+Ubuntu 24.04 VPS at `/opt/slphc`.
+
+`docker-compose.prod.yml` differs from the dev `docker-compose.yml`:
+- Backend/celery run the built image directly — no source bind-mount, no
+  `--reload`; `uvicorn` runs with `--workers 2`.
+- Postgres and Redis are not exposed on the host at all (internal Docker
+  network only) — the dev compose file's `5432`/`6379` host port mappings
+  are dropped.
+- The frontend is compiled to static files by a one-shot `frontend-build`
+  service (`frontend/Dockerfile.prod`, `npm run build` with
+  `VITE_API_BASE_URL=/api` baked in) into a shared volume, instead of
+  running the Vite dev server.
+- A `caddy` service (`Caddyfile`) fronts everything on 80/443: serves the
+  built frontend as static files with SPA fallback, reverse-proxies
+  `/api/*` to the backend container, and obtains/renews its Let's Encrypt
+  certificate automatically (Caddy's automatic HTTPS — no certbot/manual
+  cert management). `ENVIRONMENT=production` in `.env` makes the refresh
+  cookie `Secure`, which requires this HTTPS front end to work at all.
+- `.env` on the VPS is generated on the server itself (fresh
+  `POSTGRES_PASSWORD`/`JWT_SECRET_KEY`/`BOOTSTRAP_ADMIN_PASSWORD` — never
+  the dev-machine ones), with `BACKEND_CORS_ORIGINS`/`QR_CODE_BASE_URL`
+  pointed at the production domain. SMTP/SMS credentials are the same real
+  ones used in dev (same mailbox/gateway). It is not committed — matches
+  `.gitignore`'s existing `.env` exclusion.
+
+Redeploy after a `git push` to `main`:
+
+```bash
+ssh root@<vps-ip>
+cd /opt/slphc
+git pull
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+# only if a new Alembic revision was added:
+docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
+```
+
+## Verified working (2026-09-05) — production deployment
+
+- Provisioned a fresh Hostinger Ubuntu 24.04 VPS: installed Docker Engine +
+  Compose plugin, configured `ufw` to allow only SSH/80/443.
+- `npm run build` (which type-checks via `tsc -b`, unlike the dev server)
+  caught two pre-existing TypeScript errors — an unused import in
+  `ReportsPage.tsx` and an under-annotated `flatMap` return type in
+  `UsersPage.tsx` — fixed both before the image would build.
+- Built and started `docker-compose.prod.yml`; Caddy obtained a Let's
+  Encrypt certificate for `sl-logistics-ops.statistics.sl` on first start
+  (confirmed in its logs: `certificate obtained successfully`).
+- Ran `alembic upgrade head` (all 11 revisions applied) and `seed.py`
+  (roles/permissions/bootstrap admin created) against the production
+  database.
+- `curl` verification: `https://` frontend returns 200, `http://` redirects
+  308 to `https://`, `/api/auth/login` with the bootstrap admin returns a
+  valid access token and sets `slphc_refresh_token` with
+  `HttpOnly; Secure; SameSite=lax`.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
