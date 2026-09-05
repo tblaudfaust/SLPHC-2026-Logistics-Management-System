@@ -1,26 +1,31 @@
+import secrets
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, client_user_agent, get_db, require_permission, require_role
 from app.core.security import hash_password, verify_password
-from app.models.rbac import Permission, Role, UserPermissionOverride
-from app.models.user import User
+from app.models.rbac import Permission, Role, UserPermissionOverride, user_roles
+from app.models.user import RefreshToken, User
 from app.models.warehouse import UserWarehouseAccess, Warehouse
 from app.schemas.common import Page, PaginationParams
 from app.schemas.user import (
     EffectivePermission,
     PasswordChange,
+    PasswordResetResult,
     UserCreate,
+    UserDeleteResult,
     UserPermissionOverridesUpdate,
     UserRead,
     UserUpdate,
     WarehouseAccessRead,
     WarehouseAccessUpdate,
 )
-from app.services import audit_service
+from app.services import audit_service, notification_service
 from app.services.pagination import paginate
 from app.services.permission_service import effective_permission_codes
 
@@ -125,6 +130,128 @@ def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+def _revoke_active_refresh_tokens(db: Session, user_id: uuid.UUID) -> None:
+    db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+
+
+@router.post("/{user_id}/reset-password", response_model=PasswordResetResult)
+def reset_user_password(
+    user_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("System Administrator")),
+):
+    """Admin-initiated reset for a user who's locked out — as opposed to
+    POST /users/me/change-password, which is self-service and requires
+    knowing the current password. Deliberately blocked against targeting
+    yourself: an admin resetting their own password would bypass that
+    current-password check, so self-service stays the only path for your
+    own account."""
+    if user_id == current_user.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Use Settings to change your own password."
+        )
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
+
+    temporary_password = secrets.token_urlsafe(9)
+    user.hashed_password = hash_password(temporary_password)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    _revoke_active_refresh_tokens(db, user_id)
+
+    audit_service.record(
+        db, user_id=current_user.id, action="password_reset", entity_type="user", entity_id=str(user.id),
+        reason="Password reset by administrator.",
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    notifications = notification_service.notify(
+        db,
+        event_type="user.password_reset",
+        context={"first_name": user.first_name, "temporary_password": temporary_password},
+        recipients=[user],
+        related_entity_type="user",
+        related_entity_id=str(user.id),
+    )
+    db.commit()
+    notification_service.dispatch(notifications)
+    return PasswordResetResult(
+        temporary_password=temporary_password,
+        detail=f"Password reset. A copy was emailed to {user.email}.",
+    )
+
+
+@router.delete("/{user_id}", response_model=UserDeleteResult)
+def delete_user(
+    user_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("System Administrator")),
+):
+    """Tries a real delete first; falls back to deactivation if the account
+    has any historical activity (asset custody, inventory actions, audit
+    trail, ...) since those foreign keys must never silently disappear or
+    be nulled out — accountability records outlive the account that made
+    them. Either way the account can no longer sign in."""
+    if user_id == current_user.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot delete your own account.")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
+
+    if any(r.name == "System Administrator" for r in user.roles):
+        remaining = db.scalar(
+            select(func.count())
+            .select_from(User)
+            .join(user_roles, user_roles.c.user_id == User.id)
+            .join(Role, Role.id == user_roles.c.role_id)
+            .where(Role.name == "System Administrator", User.is_active.is_(True), User.id != user_id)
+        )
+        if not remaining:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Cannot remove the last active System Administrator."
+            )
+
+    old_value = {"email": user.email, "roles": [r.name for r in user.roles]}
+    entity_id = str(user.id)
+
+    try:
+        db.delete(user)
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        user = db.get(User, user_id)
+        user.is_active = False
+        _revoke_active_refresh_tokens(db, user_id)
+        audit_service.record(
+            db, user_id=current_user.id, action="deactivate", entity_type="user", entity_id=entity_id,
+            old_value=old_value, new_value={"is_active": False},
+            reason="Delete requested; account has historical activity so it was deactivated instead.",
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+        )
+        db.commit()
+        return UserDeleteResult(
+            detail=(
+                "This account has history (assets, transactions, or audit trail) tied to it, "
+                "so it was deactivated instead of deleted — those records must stay intact."
+            ),
+            hard_deleted=False,
+        )
+
+    audit_service.record(
+        db, user_id=current_user.id, action="delete", entity_type="user", entity_id=entity_id,
+        old_value=old_value,
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    return UserDeleteResult(detail="User account deleted.", hard_deleted=True)
 
 
 def _build_effective_permissions(db: Session, user: User) -> list[EffectivePermission]:

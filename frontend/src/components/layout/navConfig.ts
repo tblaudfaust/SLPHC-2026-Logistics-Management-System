@@ -32,5 +32,5 @@ export const navItems: NavItem[] = [
   { label: "Roles & Permissions", to: "/roles", icon: ShieldCheck, permission: "roles.view" },
   { label: "Locations & Warehouses", to: "/locations", icon: MapPin, permission: "locations.view" },
   { label: "Audit Log", to: "/audit", icon: ScrollText, permission: "audit.view" },
-  { label: "Settings", to: "/settings", icon: Settings, requiresRole: "System Administrator" },
+  { label: "Settings", to: "/settings", icon: Settings },
 ];

@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { Pencil, Plus, ShieldCheck, Warehouse as WarehouseIcon } from "lucide-react";
+import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, Warehouse as WarehouseIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -23,7 +23,15 @@ import {
 import { useWarehouseOptions } from "@/hooks/useWarehouseOptions";
 import { ApiError, api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
-import type { EffectivePermission, Page, Role, UserRecord, WarehouseAccess } from "@/types";
+import type {
+  EffectivePermission,
+  Page,
+  PasswordResetResult,
+  Role,
+  UserDeleteResult,
+  UserRecord,
+  WarehouseAccess,
+} from "@/types";
 
 const createUserSchema = z.object({
   email: z.string().email(),
@@ -52,8 +60,11 @@ export function UsersPage() {
   const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
   const [permissionsUser, setPermissionsUser] = useState<UserRecord | null>(null);
   const [warehouseAccessUser, setWarehouseAccessUser] = useState<UserRecord | null>(null);
+  const [resetPasswordUser, setResetPasswordUser] = useState<UserRecord | null>(null);
+  const [deletingUser, setDeletingUser] = useState<UserRecord | null>(null);
   const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
   const isSystemAdmin = useAuthStore((s) => s.isSystemAdmin());
   const canEditUsers = useAuthStore((s) => s.hasPermission("users.update"));
 
@@ -150,6 +161,16 @@ export function UsersPage() {
                         <WarehouseIcon size={14} /> Warehouses
                       </Button>
                     )}
+                    {isSystemAdmin && u.id !== currentUser?.id && (
+                      <Button variant="secondary" onClick={() => setResetPasswordUser(u)}>
+                        <KeyRound size={14} /> Reset password
+                      </Button>
+                    )}
+                    {isSystemAdmin && u.id !== currentUser?.id && (
+                      <Button variant="destructive" onClick={() => setDeletingUser(u)}>
+                        <Trash2 size={14} /> Delete
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -190,7 +211,114 @@ export function UsersPage() {
       {warehouseAccessUser && (
         <WarehouseAccessDialog user={warehouseAccessUser} onClose={() => setWarehouseAccessUser(null)} />
       )}
+
+      {resetPasswordUser && (
+        <ResetPasswordDialog user={resetPasswordUser} onClose={() => setResetPasswordUser(null)} />
+      )}
+
+      {deletingUser && <DeleteUserDialog user={deletingUser} onClose={() => setDeletingUser(null)} />}
     </div>
+  );
+}
+
+function ResetPasswordDialog({ user, onClose }: { user: UserRecord; onClose: () => void }) {
+  const queryClient = useQueryClient();
+
+  const resetMutation = useMutation({
+    mutationFn: () => api.post<PasswordResetResult>(`/users/${user.id}/reset-password`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Reset password — ${user.first_name} ${user.last_name}`}>
+      {!resetMutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-500">
+            This immediately replaces {user.first_name}'s password with a new random one and signs
+            them out everywhere. A copy is emailed to {user.email}; you'll also see it here once, to
+            hand over directly if needed.
+          </p>
+          {resetMutation.error instanceof ApiError && (
+            <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {resetMutation.error.message}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={() => resetMutation.mutate()} disabled={resetMutation.isPending}>
+              {resetMutation.isPending ? "Resetting..." : "Reset password"}
+            </Button>
+          </div>
+        </>
+      )}
+
+      {resetMutation.data && (
+        <>
+          <p className="mb-2 text-sm text-slate-700">{resetMutation.data.detail}</p>
+          <p className="mb-4 text-xs text-slate-500">
+            This is shown once and can't be retrieved again — ask {user.first_name} to change it
+            after signing in.
+          </p>
+          <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm text-slate-900">
+            {resetMutation.data.temporary_password}
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </>
+      )}
+    </Dialog>
+  );
+}
+
+function DeleteUserDialog({ user, onClose }: { user: UserRecord; onClose: () => void }) {
+  const queryClient = useQueryClient();
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete<UserDeleteResult>(`/users/${user.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Delete account — ${user.first_name} ${user.last_name}`}>
+      {!deleteMutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-500">
+            This removes {user.first_name} {user.last_name}'s account and signs them out everywhere.
+            If they have any history in the system (assets, transactions, audit trail), the account
+            is deactivated instead of removed, so those records stay intact.
+          </p>
+          {deleteMutation.error instanceof ApiError && (
+            <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {deleteMutation.error.message}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? "Deleting..." : "Delete account"}
+            </Button>
+          </div>
+        </>
+      )}
+
+      {deleteMutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-700">{deleteMutation.data.detail}</p>
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </>
+      )}
+    </Dialog>
   );
 }
 

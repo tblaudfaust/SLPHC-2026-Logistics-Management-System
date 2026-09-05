@@ -32,6 +32,16 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class PasswordResetResult(BaseModel):
+    temporary_password: str
+    detail: str
+
+
+class UserDeleteResult(BaseModel):
+    detail: str
+    hard_deleted: bool
+
+
 class RoleSummary(BaseModel):
     id: uuid.UUID
     name: str

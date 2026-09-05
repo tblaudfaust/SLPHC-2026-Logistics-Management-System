@@ -14,6 +14,16 @@ export interface RoleSummary {
   name: string;
 }
 
+export interface PasswordResetResult {
+  temporary_password: string;
+  detail: string;
+}
+
+export interface UserDeleteResult {
+  detail: string;
+  hard_deleted: boolean;
+}
+
 export interface UserRecord {
   id: string;
   email: string;

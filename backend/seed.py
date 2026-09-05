@@ -185,6 +185,16 @@ NOTIFICATION_TEMPLATES = [
         None,
     ),
     (
+        "user.password_reset",
+        "Your SLPHC 2026 Logistics password has been reset",
+        "Hello {first_name},\n\n"
+        "An administrator has reset your password. Your temporary password is:\n\n"
+        "    {temporary_password}\n\n"
+        "Please sign in and change it immediately from Settings.\n\n"
+        "If you did not expect this, contact your system administrator.",
+        None,
+    ),
+    (
         "inventory.receipt",
         "Stock received at {warehouse_name}",
         "Goods received at {warehouse_name} from {supplier_name}.\n\n"
