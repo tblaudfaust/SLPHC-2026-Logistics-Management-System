@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_permission
 from app.models.asset import Asset, AssetCategory
-from app.models.inventory import InventoryTransaction
+from app.models.inventory import InventoryTransaction, StockTransfer
 from app.models.location import District, Region
 from app.models.user import User
 
@@ -31,17 +31,29 @@ OFFICE_ITEM_CATEGORY_NAMES = [
 @router.get("/summary")
 def dashboard_summary(db: Session = Depends(get_db), _=Depends(require_permission("dashboard.view"))):
     """Real asset counts as of Phase 2 (register + status workflow). Shipment/
-    Starlink-specific KPIs (in_transit-via-shipment, delivered, pending_receipt,
-    active_alerts) stay 0 until those modules land in later phases (brief §13.1)."""
+    Starlink-specific KPIs (delivered, pending_receipt, active_alerts) stay 0
+    until those modules land in later phases (brief §13.1).
+
+    "in_transit" combines two different subsystems that both mean "physically
+    moving right now": individually serialized Asset rows with
+    status=IN_TRANSIT, plus the quantity on any StockTransfer (bulk,
+    quantity-tracked categories) that hasn't been confirmed received yet.
+    Different tracking models, same real-world meaning — a district office
+    waiting on a delivery doesn't care which subsystem is moving it."""
     status_counts = dict(
         db.execute(select(Asset.status, func.count()).group_by(Asset.status)).all()
     )
+    in_transit_transfer_qty = db.scalar(
+        select(func.coalesce(func.sum(StockTransfer.quantity), 0)).where(
+            StockTransfer.status == "IN_TRANSIT"
+        )
+    ) or 0
 
     return {
         "total_assets": sum(status_counts.values()),
         "available": status_counts.get("AVAILABLE", 0),
         "allocated": status_counts.get("ALLOCATED", 0),
-        "in_transit": status_counts.get("IN_TRANSIT", 0),
+        "in_transit": status_counts.get("IN_TRANSIT", 0) + in_transit_transfer_qty,
         "delivered": 0,
         "assigned": status_counts.get("ASSIGNED", 0),
         "pending_receipt": 0,
