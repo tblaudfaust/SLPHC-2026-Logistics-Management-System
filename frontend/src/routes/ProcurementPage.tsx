@@ -1,12 +1,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,6 +35,16 @@ const supplierSchema = z.object({
   address: z.string().optional(),
 });
 type SupplierValues = z.infer<typeof supplierSchema>;
+
+const editSupplierSchema = z.object({
+  name: z.string().min(1, "Required"),
+  contact_person: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  address: z.string().optional(),
+  is_active: z.boolean(),
+});
+type EditSupplierValues = z.infer<typeof editSupplierSchema>;
 
 const procurementSchema = z.object({
   supplier_id: z.string().optional(),
@@ -81,6 +92,7 @@ export function ProcurementPage() {
 
 function SuppliersTab({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const queryClient = useQueryClient();
 
   const suppliersQuery = useQuery({
@@ -130,6 +142,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
               <TableHeaderCell>Contact</TableHeaderCell>
               <TableHeaderCell>Phone</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell></TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -144,17 +157,28 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
                     {s.is_active ? "Active" : "Inactive"}
                   </Badge>
                 </TableCell>
+                <TableCell>
+                  {canManage && (
+                    <Button variant="secondary" onClick={() => setEditingSupplier(s)}>
+                      <Pencil size={14} /> Edit
+                    </Button>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {suppliersQuery.data.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-slate-400">
+                <TableCell colSpan={6} className="py-8 text-center text-slate-400">
                   No suppliers yet.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+      )}
+
+      {editingSupplier && (
+        <EditSupplierDialog supplier={editingSupplier} onClose={() => setEditingSupplier(null)} />
       )}
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="New supplier">
@@ -198,6 +222,83 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
         </form>
       </Dialog>
     </div>
+  );
+}
+
+function EditSupplierDialog({ supplier, onClose }: { supplier: Supplier; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<EditSupplierValues>({
+    resolver: zodResolver(editSupplierSchema),
+    defaultValues: {
+      name: supplier.name,
+      contact_person: supplier.contact_person ?? "",
+      phone: supplier.phone ?? "",
+      email: supplier.email ?? "",
+      address: supplier.address ?? "",
+      is_active: supplier.is_active,
+    },
+  });
+
+  const updateSupplier = useMutation({
+    mutationFn: (values: EditSupplierValues) => api.put(`/suppliers/${supplier.id}`, values),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+      queryClient.invalidateQueries({ queryKey: ["suppliers-for-select"] });
+      onClose();
+    },
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Edit supplier — ${supplier.name}`}>
+      <form onSubmit={handleSubmit((v) => updateSupplier.mutate(v))} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="edit_supplier_name">Name</Label>
+          <Input id="edit_supplier_name" {...register("name")} />
+          {errors.name && <p className="text-xs text-red-600">{errors.name.message}</p>}
+        </div>
+        <p className="text-xs text-slate-400">
+          Type ({supplier.supplier_type === "donor" ? "Donor" : "Supplier"}) can't be changed after
+          creation.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="edit_contact_person">Contact person</Label>
+            <Input id="edit_contact_person" {...register("contact_person")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit_phone">Phone</Label>
+            <Input id="edit_phone" {...register("phone")} />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="edit_email">Email</Label>
+          <Input id="edit_email" {...register("email")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="edit_address">Address</Label>
+          <Input id="edit_address" {...register("address")} />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <Checkbox {...register("is_active")} />
+          Active
+        </label>
+        {updateSupplier.error instanceof ApiError && (
+          <p className="text-xs text-red-600">{updateSupplier.error.message}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={updateSupplier.isPending}>
+            {updateSupplier.isPending ? "Saving..." : "Save changes"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 

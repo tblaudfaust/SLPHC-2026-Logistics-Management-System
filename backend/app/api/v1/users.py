@@ -108,18 +108,25 @@ def update_user(
     if payload.role_ids is not None and "System Administrator" not in {r.name for r in current_user.roles}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a System Administrator can change a user's roles.")
 
+    if payload.is_active is False and user_id == current_user.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot disable your own account.")
+
     if payload.email is not None and payload.email != user.email:
         existing = db.scalar(select(User).where(User.email == payload.email, User.id != user_id))
         if existing:
             raise HTTPException(status.HTTP_409_CONFLICT, "A user with this email already exists.")
 
     old_value = {"is_active": user.is_active, "roles": [r.name for r in user.roles]}
+    was_active = user.is_active
     data = payload.model_dump(exclude_unset=True, exclude={"role_ids"})
     for field, value in data.items():
         setattr(user, field, value)
     if payload.role_ids is not None:
         roles = db.scalars(select(Role).where(Role.id.in_(payload.role_ids))).all()
         user.roles = list(roles)
+
+    if was_active and not user.is_active:
+        _revoke_active_refresh_tokens(db, user_id)
 
     audit_service.record(
         db, user_id=current_user.id, action="update", entity_type="user", entity_id=str(user.id),

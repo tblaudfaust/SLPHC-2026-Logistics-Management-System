@@ -1,6 +1,15 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, Warehouse as WarehouseIcon } from "lucide-react";
+import {
+  Ban,
+  CheckCircle2,
+  KeyRound,
+  Pencil,
+  Plus,
+  ShieldCheck,
+  Trash2,
+  Warehouse as WarehouseIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
@@ -87,6 +96,12 @@ export function UsersPage() {
     },
   });
 
+  const toggleActive = useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
+      api.put(`/users/${id}`, { is_active }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -150,6 +165,23 @@ export function UsersPage() {
                     {canEditUsers && (
                       <Button variant="secondary" onClick={() => setEditingUser(u)}>
                         <Pencil size={14} /> Edit
+                      </Button>
+                    )}
+                    {canEditUsers && u.id !== currentUser?.id && (
+                      <Button
+                        variant="secondary"
+                        onClick={() => toggleActive.mutate({ id: u.id, is_active: !u.is_active })}
+                        disabled={toggleActive.isPending}
+                      >
+                        {u.is_active ? (
+                          <>
+                            <Ban size={14} /> Disable
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 size={14} /> Enable
+                          </>
+                        )}
                       </Button>
                     )}
                     {isSystemAdmin && (
