@@ -242,6 +242,23 @@ def create_kit(
     return kit
 
 
+# NOTE: every bare-literal-segment route under this prefix (like /faults
+# below) must be registered before GET/PUT "/{kit_id}" — Starlette matches
+# routes in registration order, so a literal path registered after the
+# {kit_id} pattern would never be reached (FastAPI tries to parse the
+# literal as a UUID and 422s instead of falling through).
+@router.get("/faults", response_model=list[StarlinkFaultRead])
+def list_faults(
+    status_filter: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("starlink.view")),
+):
+    stmt = select(StarlinkFault).order_by(StarlinkFault.created_at.desc())
+    if status_filter:
+        stmt = stmt.where(StarlinkFault.status == status_filter)
+    return db.scalars(stmt).all()
+
+
 @router.get("/{kit_id}", response_model=StarlinkKitRead)
 def get_kit(kit_id: uuid.UUID, db: Session = Depends(get_db), _=Depends(require_permission("starlink.view"))):
     return _get_kit(db, kit_id)
@@ -411,18 +428,6 @@ def create_checkin(
 
 
 # ---------------------------------------------------------------- faults / maintenance
-
-@router.get("/faults", response_model=list[StarlinkFaultRead])
-def list_faults(
-    status_filter: str | None = None,
-    db: Session = Depends(get_db),
-    _=Depends(require_permission("starlink.view")),
-):
-    stmt = select(StarlinkFault).order_by(StarlinkFault.created_at.desc())
-    if status_filter:
-        stmt = stmt.where(StarlinkFault.status == status_filter)
-    return db.scalars(stmt).all()
-
 
 @router.post("/{kit_id}/faults", response_model=StarlinkFaultRead, status_code=status.HTTP_201_CREATED)
 def create_fault(
