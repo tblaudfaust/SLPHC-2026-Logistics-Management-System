@@ -50,6 +50,16 @@ PERMISSIONS = [
     ("inventory.reconcile", "inventory", "Run and finalize physical stock counts"),
     ("notifications.view", "notifications", "View the notification delivery log"),
     ("reports.view", "reports", "View, export and email accountability reports"),
+    ("starlink.view", "starlink", "View Starlink kits, deployments and subscriptions"),
+    (
+        "starlink.manage", "starlink",
+        "Register/edit Starlink kits, field teams, funding sources and hard-to-reach areas",
+    ),
+    ("starlink.install", "starlink", "Record Starlink installations"),
+    ("starlink.subscription", "starlink", "Manage Starlink subscriptions and payments"),
+    ("starlink.assign", "starlink", "Assign, return or move Starlink kits to/from field teams"),
+    ("starlink.checkin", "starlink", "Submit a field team's daily Starlink check-in"),
+    ("starlink.maintenance", "starlink", "Report and resolve Starlink faults"),
 ]
 
 # role_name -> permission codes. System Administrator gets everything below.
@@ -58,28 +68,30 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     "National Logistics Director": [
         "dashboard.view", "audit.view", "locations.view", "warehouses.view", "users.view", "roles.view",
         "assets.view", "suppliers.view", "procurements.view", "inventory.view", "notifications.view",
-        "reports.view",
+        "reports.view", "starlink.view", "starlink.manage", "starlink.assign", "starlink.subscription",
     ],
     "Logistics Manager": [
         "dashboard.view", "locations.view", "warehouses.view", "warehouses.manage", "users.view", "audit.view",
         "assets.view", "assets.create", "assets.update", "assets.manage_catalogue",
         "suppliers.view", "suppliers.manage", "procurements.view", "procurements.manage",
         "inventory.view", "inventory.receive", "inventory.transfer", "inventory.adjust", "inventory.reconcile",
-        "notifications.view", "reports.view",
+        "notifications.view", "reports.view", "starlink.view", "starlink.manage", "starlink.assign",
     ],
     "Central Warehouse Manager": [
         "dashboard.view", "warehouses.view", "warehouses.manage", "locations.view",
         "assets.view", "assets.create", "assets.update",
         "suppliers.view", "procurements.view",
         "inventory.view", "inventory.receive", "inventory.transfer", "inventory.adjust", "inventory.reconcile",
-        "notifications.view", "reports.view",
+        "notifications.view", "reports.view", "starlink.view", "starlink.manage", "starlink.assign",
     ],
     "Regional Logistics Officer": [
         "dashboard.view", "locations.view", "warehouses.view", "assets.view", "inventory.view", "reports.view",
+        "starlink.view", "starlink.assign",
     ],
     "District Logistics Officer": [
         "dashboard.view", "locations.view", "warehouses.view", "assets.view", "assets.update",
         "inventory.view", "inventory.receive", "inventory.reconcile", "reports.view",
+        "starlink.view", "starlink.assign", "starlink.checkin",
     ],
     "Warehouse Officer": [
         "dashboard.view", "warehouses.view", "assets.view", "assets.create", "assets.update",
@@ -87,18 +99,22 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
     "IT Asset Officer": [
         "dashboard.view", "locations.view", "assets.view", "assets.create", "assets.update",
-        "assets.manage_catalogue", "notifications.view",
+        "assets.manage_catalogue", "notifications.view", "starlink.view", "starlink.install", "starlink.maintenance",
     ],
-    "Starlink / Connectivity Officer": ["dashboard.view", "locations.view", "assets.view", "assets.update"],
+    "Starlink / Connectivity Officer": [
+        "dashboard.view", "locations.view", "assets.view", "assets.update",
+        "starlink.view", "starlink.manage", "starlink.install", "starlink.subscription",
+        "starlink.assign", "starlink.maintenance", "starlink.checkin",
+    ],
     "Transport Officer": ["dashboard.view", "locations.view", "assets.view"],
-    "Supervisor": ["dashboard.view", "assets.view"],
+    "Supervisor": ["dashboard.view", "assets.view", "starlink.view", "starlink.checkin"],
     "Enumerator": ["dashboard.view"],
     "Auditor": [
         "audit.view", "dashboard.view", "users.view", "roles.view", "locations.view", "warehouses.view",
         "assets.view", "suppliers.view", "procurements.view", "inventory.view", "notifications.view",
-        "reports.view",
+        "reports.view", "starlink.view",
     ],
-    "Senior Management": ["dashboard.view", "assets.view", "inventory.view", "reports.view"],
+    "Senior Management": ["dashboard.view", "assets.view", "inventory.view", "reports.view", "starlink.view"],
 }
 
 # Sierra Leone's actual administrative geography (5 regions / 16 districts, post-2017 reform).
@@ -243,6 +259,55 @@ NOTIFICATION_TEMPLATES = [
         "{performed_by} adjusted {category_name} at {warehouse_name} by {quantity_delta:+d}.\n\n"
         "Reason: {reason}",
         None,
+    ),
+    (
+        "starlink.subscription_expiring",
+        "Starlink subscription expiring in {days_remaining} day(s): {asset_tag}",
+        "The {plan_name} subscription for Starlink kit {asset_tag} ({kit_type}) expires on "
+        "{expiry_date} — {days_remaining} day(s) from now.\n\nRenew it before service is interrupted.",
+        "Starlink {asset_tag} subscription expires {expiry_date} ({days_remaining}d). Renew soon.",
+    ),
+    (
+        "starlink.subscription_expired",
+        "Starlink subscription EXPIRED: {asset_tag}",
+        "The {plan_name} subscription for Starlink kit {asset_tag} ({kit_type}) expired on "
+        "{expiry_date} and has not been renewed. Connectivity may already be lost.",
+        "ALERT: Starlink {asset_tag} subscription expired {expiry_date}.",
+    ),
+    (
+        "starlink.payment_overdue",
+        "Starlink payment overdue: {asset_tag}",
+        "The subscription payment for Starlink kit {asset_tag} ({plan_name}) was due on "
+        "{next_payment_date} and has not been recorded as paid.",
+        "Starlink {asset_tag} payment overdue since {next_payment_date}.",
+    ),
+    (
+        "starlink.offline_reported",
+        "Starlink reported offline: {asset_tag}",
+        "{asset_tag} ({kit_type}) at {location_label} was reported offline in the latest check-in "
+        "({checkin_at}). Connectivity quality: {connectivity_quality}.",
+        "ALERT: Starlink {asset_tag} offline at {location_label} ({checkin_at}).",
+    ),
+    (
+        "starlink.support_requested",
+        "ICT support requested: Starlink {asset_tag}",
+        "The field team carrying {asset_tag} has requested technical support.\n\n"
+        "Reported problem: {technical_problem}\n\nLocation: {location_label}",
+        "Support needed: Starlink {asset_tag} at {location_label}. {technical_problem}",
+    ),
+    (
+        "starlink.hard_to_reach_gap",
+        "Starlink required but not assigned: {area_name}",
+        "{area_name} in {district_name} is classified Starlink Required, but the field team "
+        "deployed there currently has no active Starlink assignment.",
+        "GAP: {area_name} ({district_name}) needs Starlink — none assigned.",
+    ),
+    (
+        "starlink.kit_overdue_return",
+        "Starlink kit overdue for return: {asset_tag}",
+        "{asset_tag} was due back from {team_name} on {expected_return_date} and has not yet been "
+        "returned or reassigned.",
+        "OVERDUE: Starlink {asset_tag} from {team_name}, due {expected_return_date}.",
     ),
 ]
 

@@ -124,3 +124,96 @@ def check_overdue_transfers() -> None:
             notification_service.dispatch(notifications)
     finally:
         db.close()
+
+
+@celery_app.task(name="notifications.check_starlink_alerts")
+def check_starlink_alerts() -> None:
+    """Runs on Celery Beat's schedule — scans for subscription milestones
+    (30/14/7/3 days out, and expired), unpaid subscriptions, and roaming
+    kits overdue for return. Each condition is only ever alerted on once
+    (StarlinkSubscription.expiry_alert_sent_at / StarlinkTeamAssignment.overdue_notified_at
+    dedupe it), same principle as check_overdue_transfers above."""
+    from datetime import date
+
+    from app.models.starlink import StarlinkSubscription, StarlinkTeamAssignment
+    from app.services import notification_service
+
+    db = SessionLocal()
+    try:
+        today = date.today()
+        recipients = notification_service.get_users_with_permission(db, "starlink.subscription")
+
+        for sub in db.query(StarlinkSubscription).filter(StarlinkSubscription.is_current.is_(True)).all():
+            kit = sub.kit
+            already = set((sub.expiry_alert_sent_at or "").split(",")) - {""}
+            event_type = None
+            milestone = None
+
+            if sub.expiry_date:
+                days_remaining = (sub.expiry_date - today).days
+                if days_remaining < 0 and "expired" not in already:
+                    event_type, milestone = "starlink.subscription_expired", "expired"
+                    sub.status = "EXPIRED"
+                    kit.subscription_status = "EXPIRED"
+                else:
+                    for threshold in (30, 14, 7, 3):
+                        if 0 <= days_remaining <= threshold and str(threshold) not in already:
+                            event_type, milestone = "starlink.subscription_expiring", str(threshold)
+                            if sub.status == "ACTIVE":
+                                sub.status = "EXPIRING_SOON"
+                                kit.subscription_status = "EXPIRING_SOON"
+                            break
+
+            if event_type:
+                notifications = notification_service.notify(
+                    db, event_type=event_type,
+                    context={
+                        "asset_tag": kit.asset.asset_tag, "kit_type": kit.kit_type,
+                        "plan_name": sub.plan_name or "Starlink", "expiry_date": sub.expiry_date.isoformat(),
+                        "days_remaining": max(days_remaining, 0),
+                    },
+                    recipients=recipients, related_entity_type="starlink_kit", related_entity_id=str(kit.id),
+                )
+                sub.expiry_alert_sent_at = ",".join(sorted(already | {milestone}))
+                db.commit()
+                notification_service.dispatch(notifications)
+            elif sub.status == "PAYMENT_DUE" and sub.next_payment_date and sub.next_payment_date < today:
+                sub.status = "PAYMENT_OVERDUE"
+                kit.subscription_status = "PAYMENT_OVERDUE"
+                notifications = notification_service.notify(
+                    db, event_type="starlink.payment_overdue",
+                    context={
+                        "asset_tag": kit.asset.asset_tag, "plan_name": sub.plan_name or "Starlink",
+                        "next_payment_date": sub.next_payment_date.isoformat(),
+                    },
+                    recipients=recipients, related_entity_type="starlink_kit", related_entity_id=str(kit.id),
+                )
+                db.commit()
+                notification_service.dispatch(notifications)
+
+        assign_recipients = notification_service.get_users_with_permission(db, "starlink.assign")
+        overdue_assignments = (
+            db.query(StarlinkTeamAssignment)
+            .filter(
+                StarlinkTeamAssignment.status == "ACTIVE",
+                StarlinkTeamAssignment.expected_return_date < today,
+                StarlinkTeamAssignment.overdue_notified_at.is_(None),
+            )
+            .all()
+        )
+        for assignment in overdue_assignments:
+            notifications = notification_service.notify(
+                db, event_type="starlink.kit_overdue_return",
+                context={
+                    "asset_tag": assignment.kit.asset.asset_tag,
+                    "team_name": assignment.field_team.name,
+                    "expected_return_date": assignment.expected_return_date.isoformat(),
+                },
+                recipients=assign_recipients,
+                related_entity_type="starlink_kit", related_entity_id=str(assignment.kit_id),
+            )
+            assignment.overdue_notified_at = datetime.now(timezone.utc)
+            db.commit()
+            notification_service.dispatch(notifications)
+    finally:
+        db.close()

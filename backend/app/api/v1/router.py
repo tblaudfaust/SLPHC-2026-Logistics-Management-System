@@ -11,6 +11,7 @@ from app.api.v1 import (
     procurements,
     reports,
     roles,
+    starlink,
     suppliers,
     users,
     warehouses,
@@ -30,3 +31,4 @@ api_router.include_router(notifications.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(audit.router)
 api_router.include_router(reports.router)
+api_router.include_router(starlink.router)

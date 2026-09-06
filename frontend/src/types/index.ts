@@ -402,3 +402,212 @@ export interface DashboardSummary {
   districts_count: number;
   users_count: number;
 }
+
+// ---- ICT & Connectivity Assets: Starlink Management ----
+
+export type StarlinkKitType = "FIXED" | "ROAMING";
+
+export interface FieldTeam {
+  id: string;
+  team_code: string;
+  name: string;
+  team_type: string | null;
+  team_leader_name: string | null;
+  team_leader_phone: string | null;
+  region_id: string | null;
+  district_id: string | null;
+  is_active: boolean;
+}
+
+export interface FundingSource {
+  id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+}
+
+export interface HardToReachArea {
+  id: string;
+  name: string;
+  district_id: string;
+  chiefdom: string | null;
+  classification: string;
+  starlink_required: boolean;
+  notes: string | null;
+}
+
+export interface StarlinkAssetSummary {
+  id: string;
+  asset_tag: string;
+  serial_number: string | null;
+  status: string;
+  condition: string;
+  current_location_id: string | null;
+  current_custodian_id: string | null;
+  unit_cost: number | null;
+  currency: string | null;
+  warranty_start: string | null;
+  warranty_end: string | null;
+  date_acquired: string | null;
+}
+
+export interface StarlinkComponent {
+  id: string;
+  component_name: string;
+  quantity: number;
+  condition: string;
+  notes: string | null;
+}
+
+export interface StarlinkKit {
+  id: string;
+  asset_id: string;
+  kit_type: StarlinkKitType;
+  terminal_id: string | null;
+  router_serial_number: string | null;
+  funding_source_id: string | null;
+  current_field_team_id: string | null;
+  current_hard_to_reach_area_id: string | null;
+  operational_status: string;
+  installation_status: string;
+  subscription_status: string;
+  last_connectivity_quality: string | null;
+  last_checkin_at: string | null;
+  asset: StarlinkAssetSummary;
+  components: StarlinkComponent[];
+}
+
+export interface StarlinkInstallation {
+  id: string;
+  kit_id: string;
+  installation_type: string;
+  location_id: string | null;
+  installation_date: string;
+  technician_name: string | null;
+  connectivity_tested: boolean;
+  download_speed_mbps: number | null;
+  upload_speed_mbps: number | null;
+  latency_ms: number | null;
+  acceptance_status: string | null;
+  created_at: string;
+}
+
+export interface StarlinkSubscription {
+  id: string;
+  kit_id: string;
+  account_reference: string | null;
+  plan_name: string | null;
+  monthly_cost: number | null;
+  currency: string | null;
+  next_payment_date: string | null;
+  renewal_date: string | null;
+  expiry_date: string | null;
+  status: string;
+  is_current: boolean;
+  created_at: string;
+}
+
+export interface StarlinkPayment {
+  id: string;
+  subscription_id: string;
+  payment_date: string;
+  amount: number;
+  currency: string | null;
+  payment_status: string;
+}
+
+export interface StarlinkTeamAssignment {
+  id: string;
+  kit_id: string;
+  field_team_id: string;
+  region_id: string | null;
+  district_id: string | null;
+  hard_to_reach_area_id: string | null;
+  deployment_start_date: string;
+  expected_return_date: string;
+  actual_return_date: string | null;
+  released_by_name: string;
+  received_by_name: string | null;
+  witnessed_by_name: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface StarlinkReturn {
+  id: string;
+  assignment_id: string;
+  kit_id: string;
+  return_date: string;
+  final_condition: string | null;
+  missing_accessories: string | null;
+  damaged_accessories: string | null;
+  reassignment_required: boolean;
+  maintenance_required: boolean;
+}
+
+export interface StarlinkMovement {
+  id: string;
+  kit_id: string;
+  origin_location_id: string | null;
+  destination_location_id: string | null;
+  transfer_date: string;
+  released_by_name: string | null;
+  received_by_name: string | null;
+  witnessed_by_name: string | null;
+  purpose: string | null;
+  created_at: string;
+}
+
+export interface StarlinkCheckin {
+  id: string;
+  kit_id: string;
+  field_team_id: string | null;
+  checkin_at: string;
+  connectivity_quality: string;
+  starlink_operational: boolean;
+  internet_available: boolean;
+  power_available: boolean;
+  technical_support_required: boolean;
+  comment: string | null;
+}
+
+export interface StarlinkFault {
+  id: string;
+  ticket_number: string;
+  kit_id: string;
+  date_reported: string;
+  fault_description: string;
+  priority: string;
+  status: string;
+  date_resolved: string | null;
+  created_at: string;
+}
+
+export interface StarlinkDashboardSummary {
+  total_kits: number;
+  fixed_kits: number;
+  roaming_kits: number;
+  available_kits: number;
+  deployed_kits: number;
+  under_maintenance_kits: number;
+  damaged_or_lost_kits: number;
+  installed: number;
+  awaiting_installation: number;
+  installed_and_operational: number;
+  installed_but_offline: number;
+  subscriptions_active: number;
+  subscriptions_expiring_30d: number;
+  subscriptions_expiring_14d: number;
+  subscriptions_expiring_7d: number;
+  subscriptions_expired: number;
+  payments_overdue: number;
+  roaming_assigned_to_teams: number;
+  teams_in_hard_to_reach_areas: number;
+  hard_to_reach_with_connectivity: number;
+  hard_to_reach_without_connectivity: number;
+  kits_overdue_for_return: number;
+  hard_to_reach_gap: number;
+  online_kits: number;
+  offline_kits: number;
+  support_requested: number;
+}

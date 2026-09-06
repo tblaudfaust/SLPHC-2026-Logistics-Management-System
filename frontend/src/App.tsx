@@ -18,6 +18,8 @@ import { ProtectedRoute } from "@/routes/ProtectedRoute";
 import { ReportsPage } from "@/routes/ReportsPage";
 import { RolesPage } from "@/routes/RolesPage";
 import { SettingsPage } from "@/routes/SettingsPage";
+import { StarlinkKitDetailPage } from "@/routes/StarlinkKitDetailPage";
+import { StarlinkPage } from "@/routes/StarlinkPage";
 import { UsersPage } from "@/routes/UsersPage";
 
 export default function App() {
@@ -35,6 +37,8 @@ export default function App() {
               <Route path="/assets/:assetId" element={<AssetProfilePage />} />
               <Route path="/inventory" element={<InventoryPage />} />
               <Route path="/procurement" element={<ProcurementPage />} />
+              <Route path="/starlink" element={<StarlinkPage />} />
+              <Route path="/starlink/:kitId" element={<StarlinkKitDetailPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/users" element={<UsersPage />} />
