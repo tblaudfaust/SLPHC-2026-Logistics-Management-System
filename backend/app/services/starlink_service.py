@@ -441,6 +441,7 @@ def create_fault(db, kit: StarlinkKit, payload, current_user) -> StarlinkFault:
         status="REPORTED",
     )
     db.add(fault)
+    db.flush()  # assigns fault.id before the audit entry below reads it
     kit.operational_status = "UNDER_MAINTENANCE"
     kit.asset.status = "UNDER_MAINTENANCE" if kit.asset.status not in ("DAMAGED", "LOST", "DISPOSED") else kit.asset.status
 
