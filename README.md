@@ -652,6 +652,26 @@ further against the lockout counter) and clearing
 after. Worth periodically confirming documented credentials still work
 rather than assuming a past "success" screenshot is still valid.
 
+## Verified working (2026-09-06) — editable suppliers, disable/enable for user accounts
+
+**Suppliers & Procurement:** `PUT /suppliers/{id}` already existed but had
+no frontend calling it. Added an Edit dialog (name, contact person,
+phone, email, address, active — type can't change after creation,
+matching the backend schema) plus audit logging on create/update, which
+`suppliers.py` was missing while every other resource already has it.
+Verified live: edited a real supplier's phone number and saw it update in
+the table immediately.
+
+**Users:** deactivating an account was only possible via a checkbox
+buried inside the full Edit dialog. Added a one-click Disable/Enable
+button next to Reset password/Delete, gated by the same `users.update`
+permission as Edit (not System-Administrator-only) and hidden on your own
+row. Backend now also blocks disabling your own account and revokes the
+target user's active refresh tokens the moment they're deactivated — same
+treatment the account-deletion fallback path already had. Verified live
+by toggling a test account both directions (Enable → Disable → Enable),
+confirmed via the actual `PUT` requests and the Status column updating.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
