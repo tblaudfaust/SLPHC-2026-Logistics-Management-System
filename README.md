@@ -672,6 +672,82 @@ treatment the account-deletion fallback path already had. Verified live
 by toggling a test account both directions (Enable → Disable → Enable),
 confirmed via the actual `PUT` requests and the Status column updating.
 
+## ICT & Connectivity Assets — Starlink Management (2026-09-06)
+
+A full module for fixed and roaming Starlink kits, added as an extension
+of the existing system rather than a bolt-on: a Starlink kit is always
+both an `Asset` row (physical side — serial number, status, condition,
+location, custodian, cost, warranty, all reused as-is) and a new
+`StarlinkKit` row (connectivity side — fixed/roaming, terminal ID,
+funding source, operational/installation/subscription status). Nothing
+about the existing Asset Register, Inventory, or reporting changed.
+
+**What it covers:**
+- **Inventory** — register a kit (creates the Asset + StarlinkKit rows
+  together, using the same `SLPHC26-STR-000001` tag sequence as every
+  other asset category), with a components checklist.
+- **Field teams** (new — this system had no concept of a field team
+  before, only individual user accounts) and **hard-to-reach areas**
+  (district-scoped, classified Good/Moderate/Weak/Intermittent/No
+  Coverage, Hard-to-Reach, Starlink Recommended, or Starlink Required).
+- **Field team assignment** for roaming kits — a kit can only have one
+  *active* assignment at a time, enforced both in the service layer and
+  with a Postgres partial unique index (`status = 'ACTIVE'`), not just a
+  UI check. Returning a kit compares issued-vs-returned component
+  condition and flags maintenance/reassignment needs.
+- **Installation records**, **subscriptions + payment history**,
+  **movement history**, a **daily field check-in** (Starlink/internet/
+  power working, connectivity quality, technical support needed), and
+  **fault tickets**.
+- **Dashboard** — inventory/installation/subscription/field-ops/
+  connectivity KPI cards, plus a standing alert: any Starlink-required
+  area with no field team currently assigned a kit.
+- **Notifications** — reuses the existing email/SMS pipeline: new
+  templates for subscription expiring (30/14/7/3 days)/expired, payment
+  overdue, offline, support requested, and overdue return. An hourly
+  Celery Beat task scans for the subscription/payment/return cases
+  (mirroring the existing overdue-transfer scan); a check-in reporting
+  offline or requesting support pages the relevant team immediately
+  instead of waiting for the hourly scan.
+- **Permissions** — new `starlink.*` module (view/manage/install/
+  subscription/assign/checkin/maintenance) integrated into the existing
+  14 roles, not a parallel permission system.
+- **Audit** — every mutation writes to the existing `AuditLog`, same as
+  every other module; no separate Starlink audit table.
+
+**Deliberately not built** (flagging rather than silently skipping):
+charts and a map view — this app has no charting or mapping library
+integrated yet, and adding one is a separate scope from the data model
+and workflows here; the dashboard surfaces the same information as
+numeric KPI cards instead. Per-report PDF/Excel/CSV export for Starlink
+(the existing Reports module's 8 report types weren't extended to cover
+Starlink data). The "Submit check-in" button isn't permission-gated in
+the UI yet (the backend still enforces `starlink.checkin` regardless).
+
+**Verified live**, end to end, through the actual UI (not just the API):
+registered a roaming kit (`SLPHC26-STR-000001`), created a field team and
+a Starlink-required hard-to-reach area, confirmed the dashboard's gap
+alert fired ("1 Starlink-required area has no field team..."), assigned
+the kit to the team and watched the alert clear and every dashboard
+counter update correctly, submitted a field check-in, reported and
+resolved a fault ticket, and confirmed every one of those actions appears
+in the Audit Log with the right entity.
+
+**Two real bugs found and fixed during that verification** (both already
+live): a route-ordering bug where `GET /starlink/{kit_id}` was registered
+before `GET /starlink/faults`, so a request for the faults list got
+routed to the kit-detail handler with `kit_id="faults"` and 422'd on the
+UUID parse — Starlette matches routes in registration order, not
+specificity; and a fault-report audit entry that recorded `entity_id`
+as the literal string `"None"` because it read the new row's
+Python-side-default UUID before the row was flushed.
+
+**One deploy-process incident along the way:** the GitHub repo this
+project pushes to became private partway through this session (cause
+unconfirmed), which silently broke the VPS's plain anonymous
+`git pull` — worth remembering if a future deploy fails with a GitHub
+auth error out of nowhere.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
