@@ -60,6 +60,7 @@ export function StarlinkKitDetailPage() {
   const [showReturn, setShowReturn] = useState<StarlinkTeamAssignment | null>(null);
   const [showMovement, setShowMovement] = useState(false);
   const [showFault, setShowFault] = useState(false);
+  const [showCheckin, setShowCheckin] = useState(false);
   const queryClient = useQueryClient();
 
   const kitQuery = useQuery({ queryKey: ["starlink-kit", kitId], queryFn: () => api.get<StarlinkKit>(`/starlink/${kitId}`) });
@@ -92,6 +93,7 @@ export function StarlinkKitDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["starlink-subscriptions", kitId] });
     queryClient.invalidateQueries({ queryKey: ["starlink-assignments", kitId] });
     queryClient.invalidateQueries({ queryKey: ["starlink-movements", kitId] });
+    queryClient.invalidateQueries({ queryKey: ["starlink-checkins", kitId] });
     queryClient.invalidateQueries({ queryKey: ["starlink-kits"] });
     queryClient.invalidateQueries({ queryKey: ["starlink-dashboard"] });
     queryClient.invalidateQueries({ queryKey: ["starlink-faults"] });
@@ -213,7 +215,7 @@ export function StarlinkKitDetailPage() {
         {(movementsQuery.data ?? []).length === 0 && <p className="text-sm text-slate-400">No recorded movements.</p>}
       </Section>
 
-      <Section title="Connectivity Check-Ins">
+      <Section title="Connectivity Check-Ins" action={<Button variant="secondary" onClick={() => setShowCheckin(true)}>Submit check-in</Button>}>
         {(checkinsQuery.data ?? []).slice(0, 10).map((c) => (
           <DetailRow key={c.id} label={new Date(c.checkin_at).toLocaleString()} value={`${c.connectivity_quality}${c.technical_support_required ? " — support requested" : ""}`} />
         ))}
@@ -235,6 +237,7 @@ export function StarlinkKitDetailPage() {
       {showReturn && <ReturnDialog assignment={showReturn} onClose={() => setShowReturn(null)} onDone={invalidateAll} />}
       {showMovement && <MovementDialog kitId={kitId!} onClose={() => setShowMovement(false)} onDone={invalidateAll} />}
       {showFault && <FaultDialog kitId={kitId!} onClose={() => setShowFault(false)} onDone={invalidateAll} />}
+      {showCheckin && <CheckinDialog kitId={kitId!} onClose={() => setShowCheckin(false)} onDone={invalidateAll} />}
     </div>
   );
 }
@@ -732,6 +735,77 @@ function FaultDialog({ kitId, onClose, onDone }: { kitId: string; onClose: () =>
         {submit.error instanceof ApiError && <p className="text-xs text-red-600">{submit.error.message}</p>}
         <Button type="submit" className="w-full" disabled={submit.isPending}>
           {submit.isPending ? "Saving..." : "Report fault"}
+        </Button>
+      </form>
+    </Dialog>
+  );
+}
+
+const checkinSchema = z.object({
+  current_location: z.string().optional(),
+  starlink_operational: z.boolean().default(true),
+  internet_available: z.boolean().default(true),
+  power_available: z.boolean().default(true),
+  connectivity_quality: z.string().default("GOOD"),
+  technical_problem: z.string().optional(),
+  technical_support_required: z.boolean().default(false),
+  comment: z.string().optional(),
+});
+type CheckinValues = z.infer<typeof checkinSchema>;
+
+function CheckinDialog({ kitId, onClose, onDone }: { kitId: string; onClose: () => void; onDone: () => void }) {
+  const { register, handleSubmit } = useForm<CheckinValues>({
+    resolver: zodResolver(checkinSchema),
+    defaultValues: { starlink_operational: true, internet_available: true, power_available: true, connectivity_quality: "GOOD" },
+  });
+  const submit = useMutation({
+    mutationFn: (v: CheckinValues) => api.post("/starlink/checkins", { ...v, kit_id: kitId }),
+    onSuccess: () => {
+      onDone();
+      onClose();
+    },
+  });
+
+  return (
+    <Dialog open onClose={onClose} title="Daily Starlink check-in">
+      <form onSubmit={handleSubmit((v) => submit.mutate(v))} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label>Current location</Label>
+          <Input {...register("current_location")} placeholder="Town / village / landmark" />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <Checkbox {...register("starlink_operational")} /> Starlink working
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <Checkbox {...register("internet_available")} /> Internet available
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <Checkbox {...register("power_available")} /> Power available
+        </label>
+        <div className="space-y-1.5">
+          <Label>Connectivity quality</Label>
+          <Select {...register("connectivity_quality")}>
+            <option value="EXCELLENT">Excellent</option>
+            <option value="GOOD">Good</option>
+            <option value="FAIR">Fair</option>
+            <option value="POOR">Poor</option>
+            <option value="OFFLINE">Offline</option>
+          </Select>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <Checkbox {...register("technical_support_required")} /> Technical support required
+        </label>
+        <div className="space-y-1.5">
+          <Label>Technical problem (if any)</Label>
+          <Input {...register("technical_problem")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Comment</Label>
+          <Input {...register("comment")} />
+        </div>
+        {submit.error instanceof ApiError && <p className="text-xs text-red-600">{submit.error.message}</p>}
+        <Button type="submit" className="w-full" disabled={submit.isPending}>
+          {submit.isPending ? "Submitting..." : "Submit check-in"}
         </Button>
       </form>
     </Dialog>
