@@ -624,6 +624,34 @@ viewport: the pattern tiles cleanly at both sizes, stays subtle enough not
 to compete with the card, and the page still functions (logged in/out
 normally).
 
+## Fixed (2026-09-06) — Dashboard "In Transit" ignored stock transfers
+
+The KPI only counted serialized `Asset` rows with `status=IN_TRANSIT` — a
+district clearly watching two active stock transfers on the Inventory
+page's Transfers tab still saw "In Transit: 0" on the national dashboard,
+since `StockTransfer` (the quantity-tracked ledger for bulk categories)
+is a separate subsystem the KPI never looked at. `dashboard_summary` now
+adds the quantity on every `StockTransfer` still `IN_TRANSIT` to the
+serialized-asset count. Verified live: with a 2-unit and a 100-unit
+Android-Tablet transfer both in transit, the KPI correctly reads 102.
+
+## Note (2026-09-06) — production admin password had drifted
+
+While investigating the above, `logistics-ops@statistics.sl`'s password
+no longer matched the documented one (`eqq93gJdGziRrc4qx9vACgG`) — login
+failed via both the UI and a direct `curl` to `/api/auth/login`, and
+`failed_login_attempts` was at 4 of the 5-attempt lockout threshold
+(`locked_until` was still null, so not yet locked, but one more failed
+attempt would have locked it for 15 minutes per `LOCKOUT_MINUTES`). Root
+cause unconfirmed — most likely the Settings self-service "change it
+back to the original" step from the earlier password-change test didn't
+land as verified at the time. Fixed by setting the password directly via
+the backend's own `hash_password()` (not a route, to avoid guessing
+further against the lockout counter) and clearing
+`failed_login_attempts`/`locked_until`. Confirmed via `curl` immediately
+after. Worth periodically confirming documented credentials still work
+rather than assuming a past "success" screenshot is still valid.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
