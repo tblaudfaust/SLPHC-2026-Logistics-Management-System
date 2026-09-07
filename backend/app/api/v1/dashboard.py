@@ -107,6 +107,10 @@ def dashboard_summary(
         location_ids = get_allowed_warehouse_ids(db, current_user)
         if location_ids is not None:
             scope = "district" if current_user.district_id else "region" if current_user.region_id else "restricted"
+            if current_user.district_id:
+                own_district = db.get(District, current_user.district_id)
+                district_name = own_district.name if own_district else None
+                district_id = current_user.district_id
 
     if location_ids is not None:
         asset_stmt = asset_stmt.where(Asset.current_location_id.in_(location_ids))
