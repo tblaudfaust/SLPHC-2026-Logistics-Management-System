@@ -7,6 +7,7 @@ import {
   PackageCheck,
   PackageX,
   Printer,
+  Smartphone,
   Truck,
   Users2,
 } from "lucide-react";
@@ -53,6 +54,11 @@ export function DashboardPage() {
     queryKey: ["dashboard-office-items", selectedDistrictId],
     queryFn: () =>
       api.get<OfficeItemSummary[]>("/dashboard/office-items", { district_id: selectedDistrictId || undefined }),
+  });
+  const fleetItemsQuery = useQuery({
+    queryKey: ["dashboard-fleet-items", selectedDistrictId],
+    queryFn: () =>
+      api.get<OfficeItemSummary[]>("/dashboard/fleet-items", { district_id: selectedDistrictId || undefined }),
   });
 
   const scopeLabel =
@@ -170,6 +176,60 @@ export function DashboardPage() {
                       <TableRow>
                         <TableCell colSpan={4} className="py-6 text-center text-slate-400">
                           No office-item categories configured yet.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Smartphone size={16} /> Census Fleet
+                {data?.scope === "district" ? ` — ${data.district_name}` : " — National Summary"}
+              </CardTitle>
+              <p className="text-xs text-slate-500">
+                Per-category breakdown of the census-specific fleet — tablets, smartphones, power
+                banks, SIM cards, Starlink kits and the like. The KPI cards above only total these
+                across every category combined.
+              </p>
+            </CardHeader>
+            <CardContent className="p-0">
+              {fleetItemsQuery.isLoading && (
+                <div className="flex items-center gap-2 p-4 text-sm text-slate-500">
+                  <Spinner /> Loading...
+                </div>
+              )}
+              {fleetItemsQuery.data && (
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Item</TableHeaderCell>
+                      <TableHeaderCell>Type</TableHeaderCell>
+                      <TableHeaderCell>Total</TableHeaderCell>
+                      <TableHeaderCell>Available</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {fleetItemsQuery.data.map((item) => (
+                      <TableRow key={item.category_name}>
+                        <TableCell className="font-medium text-slate-900">{item.category_name}</TableCell>
+                        <TableCell>
+                          <Badge variant="neutral" className="text-[10px]">
+                            {item.tracking_type === "serialized" ? "Equipment" : "Stock"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{item.total}</TableCell>
+                        <TableCell>{item.available}</TableCell>
+                      </TableRow>
+                    ))}
+                    {fleetItemsQuery.data.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-6 text-center text-slate-400">
+                          No fleet categories configured yet.
                         </TableCell>
                       </TableRow>
                     )}

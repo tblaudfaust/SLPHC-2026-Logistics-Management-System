@@ -30,6 +30,23 @@ OFFICE_ITEM_CATEGORY_NAMES = [
     "Chargers and USB Cables",
 ]
 
+# The census-specific fleet the KPI cards above only ever show in aggregate
+# (all categories combined) — this is the per-category breakdown asked for
+# after the district switcher shipped: "there's no tablets in Office &
+# Store Items for [a district]" turned out to mean there was nowhere on the
+# Dashboard to see tablets *by category* at all, aggregate KPIs aside.
+FLEET_CATEGORY_NAMES = [
+    "Android Tablets",
+    "Android-Tablet",
+    "Smartphones",
+    "Power Banks",
+    "SIM Cards",
+    "Starlink Kits",
+    "MiFi Devices / Modems",
+    "GPS Devices",
+    "Solar Chargers",
+]
+
 
 def _district_location_ids(db: Session, district_id: uuid.UUID) -> list[uuid.UUID]:
     return list(db.scalars(select(Location.id).where(Location.district_id == district_id)).all())
@@ -143,33 +160,31 @@ def dashboard_summary(
     }
 
 
-@router.get("/office-items")
-def office_items_summary(
-    district_id: uuid.UUID | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("dashboard.view")),
-):
-    """National (or, with `district_id`, district-scoped) at-a-glance stock
-    of office/administrative supplies — a quick-insight companion to the
-    fleet KPIs above, not a replacement for the full detail already
-    available by drilling into Inventory (per-warehouse balances) or the
-    Asset register (per-unit status). For a quantity-tracked category,
-    "available" is the same as "total": all on-hand quantity in a warehouse
-    is available by definition, there's no separate allocation sub-state
-    for consumables the way there is for serialized equipment."""
-    location_ids: list[uuid.UUID] | set[uuid.UUID] | None = None
+def _resolve_scope_location_ids(
+    db: Session, current_user: User, district_id: uuid.UUID | None
+) -> list[uuid.UUID] | set[uuid.UUID] | None:
     if district_id:
         check_district_access(db, current_user, district_id)
         location_ids = _district_location_ids(db, district_id)
         explicit = {a.warehouse_id for a in current_user.warehouse_access}
         if explicit:
             location_ids = [loc_id for loc_id in location_ids if loc_id in explicit]
-    else:
-        location_ids = get_allowed_warehouse_ids(db, current_user)
+        return location_ids
+    return get_allowed_warehouse_ids(db, current_user)
 
-    categories = db.scalars(
-        select(AssetCategory).where(AssetCategory.name.in_(OFFICE_ITEM_CATEGORY_NAMES))
-    ).all()
+
+def _category_breakdown(
+    db: Session, category_names: list[str], location_ids: list[uuid.UUID] | set[uuid.UUID] | None
+) -> list[dict]:
+    """Per-category Total/Available for a curated, ordered list of category
+    names — shared by the "Office & Store Items" and "Census Fleet" glances.
+    Matched by name so it degrades gracefully (just omits a row) if a
+    deployment doesn't have one of these categories seeded. For a
+    quantity-tracked category, "available" is the same as "total": all
+    on-hand quantity in a warehouse is available by definition, there's no
+    separate allocation sub-state for consumables the way there is for
+    serialized equipment."""
+    categories = db.scalars(select(AssetCategory).where(AssetCategory.name.in_(category_names))).all()
     categories_by_name = {c.name: c for c in categories}
 
     quantity_category_ids = [c.id for c in categories if c.tracking_type == "quantity"]
@@ -197,7 +212,7 @@ def office_items_summary(
         available_by_category = dict(db.execute(available_stmt.group_by(Asset.category_id)).all())
 
     results = []
-    for name in OFFICE_ITEM_CATEGORY_NAMES:
+    for name in category_names:
         category = categories_by_name.get(name)
         if not category:
             continue
@@ -211,3 +226,31 @@ def office_items_summary(
                 {"category_name": name, "tracking_type": "serialized", "total": total, "available": available}
             )
     return results
+
+
+@router.get("/office-items")
+def office_items_summary(
+    district_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("dashboard.view")),
+):
+    """National (or, with `district_id`, district-scoped) at-a-glance stock
+    of office/administrative supplies — a quick-insight companion to the
+    fleet KPIs above, not a replacement for the full detail already
+    available by drilling into Inventory (per-warehouse balances) or the
+    Asset register (per-unit status)."""
+    location_ids = _resolve_scope_location_ids(db, current_user, district_id)
+    return _category_breakdown(db, OFFICE_ITEM_CATEGORY_NAMES, location_ids)
+
+
+@router.get("/fleet-items")
+def fleet_items_summary(
+    district_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("dashboard.view")),
+):
+    """Same shape as /office-items, but for the census-specific fleet
+    (tablets, smartphones, power banks, SIM cards, Starlink kits, etc.) that
+    the KPI cards above only ever show combined across every category."""
+    location_ids = _resolve_scope_location_ids(db, current_user, district_id)
+    return _category_breakdown(db, FLEET_CATEGORY_NAMES, location_ids)
