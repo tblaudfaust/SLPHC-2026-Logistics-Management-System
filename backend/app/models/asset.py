@@ -143,3 +143,56 @@ class AssetStatusEvent(Base, UUIDPKMixin):
 
     asset: Mapped["Asset"] = relationship(back_populates="events")
     performed_by: Mapped["User | None"] = relationship(foreign_keys=[performed_by_id])
+
+
+class AssetTransfer(Base, UUIDPKMixin, TimestampMixin):
+    """Two-phase warehouse-to-warehouse movement for serialized assets —
+    mirrors StockTransfer's IN_TRANSIT/RECEIVED lifecycle (brief §9.2), but
+    picks specific units by asset tag/serial rather than a bulk quantity,
+    since each has its own identity and status history. Dispatch flips each
+    picked asset's status to IN_TRANSIT immediately (their current_location_id
+    stays at the source until receipt is confirmed — matching how a single
+    manual status change to IN_TRANSIT already behaves); receive_transfer()
+    only then moves them to the destination."""
+
+    __tablename__ = "asset_transfers"
+
+    from_warehouse_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("locations.id"), nullable=False)
+    to_warehouse_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("locations.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="IN_TRANSIT")
+    expected_delivery_date: Mapped[date] = mapped_column(Date, nullable=False)
+    actual_delivery_date: Mapped[date | None] = mapped_column(Date)
+    released_by_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    """Always the authenticated user who dispatched it, not client-supplied."""
+    received_by_name: Mapped[str | None] = mapped_column(String(150))
+    """Always the authenticated user who confirmed receipt, not client-supplied."""
+    reason: Mapped[str | None] = mapped_column(String(500))
+    dispatched_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    received_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    overdue_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    from_warehouse: Mapped["Location"] = relationship(foreign_keys=[from_warehouse_id])
+    to_warehouse: Mapped["Location"] = relationship(foreign_keys=[to_warehouse_id])
+    dispatched_by: Mapped["User | None"] = relationship(foreign_keys=[dispatched_by_id])
+    received_by: Mapped["User | None"] = relationship(foreign_keys=[received_by_id])
+    items: Mapped[list["AssetTransferItem"]] = relationship(back_populates="transfer", cascade="all, delete-orphan")
+
+    @property
+    def is_overdue(self) -> bool:
+        return self.status == "IN_TRANSIT" and self.expected_delivery_date < date.today()
+
+
+class AssetTransferItem(Base, UUIDPKMixin):
+    """One picked unit within an AssetTransfer — a plain join row (no own
+    timestamps) since the transfer header already carries the accountability
+    fields."""
+
+    __tablename__ = "asset_transfer_items"
+
+    asset_transfer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset_transfers.id"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+
+    transfer: Mapped["AssetTransfer"] = relationship(back_populates="items")
+    asset: Mapped["Asset"] = relationship()

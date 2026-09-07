@@ -254,6 +254,20 @@ NOTIFICATION_TEMPLATES = [
         "{expected_delivery_date}. Follow up needed.",
     ),
     (
+        "asset.transfer_dispatched",
+        "Asset transfer dispatched: {asset_count} unit(s)",
+        "{released_by} dispatched {asset_count} serialized asset(s) from {from_warehouse} to "
+        "{to_warehouse}.\n\nExpected delivery: {expected_delivery_date}.",
+        "Asset transfer: {asset_count} unit(s) {from_warehouse}->{to_warehouse} by {released_by}. "
+        "Due {expected_delivery_date}.",
+    ),
+    (
+        "asset.transfer_received",
+        "Asset transfer received: {asset_count} unit(s)",
+        "{received_by} confirmed receipt of {asset_count} serialized asset(s) at {to_warehouse}.",
+        None,
+    ),
+    (
         "inventory.adjustment",
         "Stock adjustment at {warehouse_name}: {category_name}",
         "{performed_by} adjusted {category_name} at {warehouse_name} by {quantity_delta:+d}.\n\n"

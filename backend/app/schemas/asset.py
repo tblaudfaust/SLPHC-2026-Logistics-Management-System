@@ -175,6 +175,40 @@ class AssetListItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AssetTransferCreate(BaseModel):
+    asset_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    from_warehouse_id: uuid.UUID
+    to_warehouse_id: uuid.UUID
+    expected_delivery_date: date = Field(description="When the receiving warehouse should expect this to arrive")
+    # released_by_name/received_by_name are deliberately not client-supplied
+    # (same reasoning as StockTransferCreate) — always the authenticated
+    # caller, so the accountability record can't name someone else.
+    reason: str | None = None
+
+
+class AssetTransferItemRead(BaseModel):
+    asset: AssetListItem
+
+    model_config = {"from_attributes": True}
+
+
+class AssetTransferRead(BaseModel):
+    id: uuid.UUID
+    from_warehouse: LocationSummary
+    to_warehouse: LocationSummary
+    status: str
+    expected_delivery_date: date
+    actual_delivery_date: date | None
+    released_by_name: str
+    received_by_name: str | None
+    reason: str | None
+    is_overdue: bool
+    items: list[AssetTransferItemRead]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class AssetStatusEventRead(BaseModel):
     id: uuid.UUID
     event_type: str

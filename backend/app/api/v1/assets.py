@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import client_ip, client_user_agent, get_db, require_permission
 from app.core.config import settings
-from app.models.asset import Asset, AssetCategory, AssetModel, AssetStatusEvent
+from app.models.asset import Asset, AssetCategory, AssetModel, AssetStatusEvent, AssetTransfer, AssetTransferItem
 from app.models.procurement import Procurement
 from app.models.supplier import Supplier
 from app.models.user import User
@@ -23,14 +23,16 @@ from app.schemas.asset import (
     AssetRead,
     AssetStatusChange,
     AssetStatusEventRead,
+    AssetTransferCreate,
+    AssetTransferRead,
     AssetUpdate,
     BulkImportRequest,
     BulkImportResponse,
 )
 from app.schemas.common import Page, PaginationParams
-from app.services import asset_service, audit_service, notification_service
+from app.services import asset_service, asset_transfer_service, audit_service, notification_service
 from app.services.pagination import paginate
-from app.services.warehouse_access_service import get_allowed_warehouse_ids
+from app.services.warehouse_access_service import check_warehouse_access, get_allowed_warehouse_ids
 
 router = APIRouter(tags=["assets"])
 
@@ -115,6 +117,7 @@ def list_assets(
     params: PaginationParams = Depends(),
     category_id: uuid.UUID | None = None,
     status_filter: str | None = None,
+    location_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("assets.view")),
 ):
@@ -126,6 +129,8 @@ def list_assets(
         stmt = stmt.where(Asset.category_id == category_id)
     if status_filter:
         stmt = stmt.where(Asset.status == status_filter)
+    if location_id:
+        stmt = stmt.where(Asset.current_location_id == location_id)
     if params.search:
         like = f"%{params.search}%"
         stmt = stmt.where(
@@ -267,6 +272,116 @@ def bulk_import_assets(
         first_asset_tag=created[0].asset_tag if created else None,
         last_asset_tag=created[-1].asset_tag if created else None,
     )
+
+
+def _asset_transfer_read_query():
+    return select(AssetTransfer).options(
+        selectinload(AssetTransfer.from_warehouse),
+        selectinload(AssetTransfer.to_warehouse),
+        selectinload(AssetTransfer.items).selectinload(AssetTransferItem.asset),
+    )
+
+
+@router.get("/assets/transfers", response_model=Page[AssetTransferRead])
+def list_asset_transfers(
+    params: PaginationParams = Depends(),
+    status_filter: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("assets.view")),
+):
+    stmt = _asset_transfer_read_query()
+    allowed = get_allowed_warehouse_ids(db, current_user)
+    if allowed is not None:
+        stmt = stmt.where(
+            (AssetTransfer.from_warehouse_id.in_(allowed)) | (AssetTransfer.to_warehouse_id.in_(allowed))
+        )
+    if status_filter:
+        stmt = stmt.where(AssetTransfer.status == status_filter)
+    stmt = stmt.order_by(AssetTransfer.created_at.desc())
+    return paginate(db, stmt, AssetTransfer, params, AssetTransferRead)
+
+
+@router.post("/assets/transfers", response_model=AssetTransferRead, status_code=status.HTTP_201_CREATED)
+def create_asset_transfer(
+    payload: AssetTransferCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("inventory.transfer")),
+):
+    """Dispatches specific serialized assets (picked by tag/serial on the
+    frontend) from one warehouse to another — the serialized-asset
+    counterpart of POST /inventory/transfers, which only handles
+    quantity-tracked categories (see inventory_service._require_quantity_tracked_category)."""
+    check_warehouse_access(db, current_user, payload.from_warehouse_id)
+    transfer = asset_transfer_service.dispatch_asset_transfer(
+        db, asset_ids=payload.asset_ids, from_warehouse_id=payload.from_warehouse_id,
+        to_warehouse_id=payload.to_warehouse_id, expected_delivery_date=payload.expected_delivery_date,
+        released_by_name=current_user.full_name, reason=payload.reason, performed_by_id=current_user.id,
+    )
+    audit_service.record(
+        db, user_id=current_user.id, action="asset_transfer_dispatch", entity_type="asset_transfer",
+        entity_id=str(transfer.id),
+        new_value={
+            "from": str(payload.from_warehouse_id), "to": str(payload.to_warehouse_id),
+            "asset_count": len(payload.asset_ids), "expected_delivery_date": str(payload.expected_delivery_date),
+            "released_by_name": transfer.released_by_name,
+        },
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+
+    notifications = notification_service.notify(
+        db, event_type="asset.transfer_dispatched",
+        context={
+            "asset_count": len(payload.asset_ids),
+            "from_warehouse": transfer.from_warehouse.name, "to_warehouse": transfer.to_warehouse.name,
+            "released_by": transfer.released_by_name,
+            "expected_delivery_date": payload.expected_delivery_date.isoformat(),
+        },
+        recipients=notification_service.get_users_with_permission(db, "inventory.reconcile"),
+        related_entity_type="asset_transfer", related_entity_id=str(transfer.id),
+    )
+
+    db.commit()
+    db.refresh(transfer)
+    notification_service.dispatch(notifications)
+    return db.execute(_asset_transfer_read_query().where(AssetTransfer.id == transfer.id)).scalar_one()
+
+
+@router.post("/assets/transfers/{transfer_id}/receive", response_model=AssetTransferRead)
+def receive_asset_transfer_endpoint(
+    transfer_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("inventory.receive")),
+):
+    transfer = db.get(AssetTransfer, transfer_id)
+    if not transfer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Transfer not found.")
+    check_warehouse_access(db, current_user, transfer.to_warehouse_id)
+
+    asset_transfer_service.receive_asset_transfer(
+        db, transfer=transfer, received_by_name=current_user.full_name, performed_by_id=current_user.id,
+    )
+    audit_service.record(
+        db, user_id=current_user.id, action="asset_transfer_receive", entity_type="asset_transfer",
+        entity_id=str(transfer.id),
+        new_value={"received_by_name": transfer.received_by_name, "asset_count": len(transfer.items)},
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+
+    notifications = notification_service.notify(
+        db, event_type="asset.transfer_received",
+        context={
+            "asset_count": len(transfer.items),
+            "to_warehouse": transfer.to_warehouse.name, "received_by": transfer.received_by_name,
+        },
+        recipients=notification_service.get_users_with_permission(db, "inventory.reconcile"),
+        related_entity_type="asset_transfer", related_entity_id=str(transfer.id),
+    )
+
+    db.commit()
+    notification_service.dispatch(notifications)
+    return db.execute(_asset_transfer_read_query().where(AssetTransfer.id == transfer.id)).scalar_one()
 
 
 @router.get("/assets/by-tag/{asset_tag}", response_model=AssetRead)

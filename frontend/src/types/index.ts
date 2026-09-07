@@ -286,6 +286,21 @@ export interface StockTransfer {
   created_at: string;
 }
 
+export interface AssetTransfer {
+  id: string;
+  from_warehouse: { id: string; name: string };
+  to_warehouse: { id: string; name: string };
+  status: "IN_TRANSIT" | "RECEIVED";
+  expected_delivery_date: string;
+  actual_delivery_date: string | null;
+  released_by_name: string;
+  received_by_name: string | null;
+  reason: string | null;
+  is_overdue: boolean;
+  items: { asset: AssetListItem }[];
+  created_at: string;
+}
+
 export interface StockCountItem {
   id: string;
   category: { id: string; name: string; code_prefix: string };
