@@ -26,7 +26,20 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
-import type { AccessibleDistrict, DashboardSummary, OfficeItemSummary } from "@/types";
+import type { AccessibleDistrict, CentralStoreOption, DashboardSummary, OfficeItemSummary } from "@/types";
+
+// The view switcher offers two kinds of selection — a district or a
+// specific central store (e.g. Freetown Central Store, viewed on its own
+// rather than folded into whichever district it sits in administratively)
+// — encoded as a single <select> value so there's one piece of state to
+// track, parsed back into the right query param before calling the API.
+type ViewSelection = { type: "district" | "warehouse"; id: string } | null;
+
+function parseViewValue(value: string): ViewSelection {
+  if (!value) return null;
+  const [type, id] = value.split(":", 2);
+  return type === "warehouse" ? { type: "warehouse", id } : { type: "district", id };
+}
 
 const kpiCards: { key: keyof DashboardSummary; label: string; icon: typeof Boxes }[] = [
   { key: "total_assets", label: "Total Assets", icon: Boxes },
@@ -39,33 +52,51 @@ const kpiCards: { key: keyof DashboardSummary; label: string; icon: typeof Boxes
 
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
-  const [selectedDistrictId, setSelectedDistrictId] = useState("");
+  const [selectedView, setSelectedView] = useState("");
+  const selection = parseViewValue(selectedView);
+  const selectedDistrictId = selection?.type === "district" ? selection.id : "";
+  const selectedWarehouseId = selection?.type === "warehouse" ? selection.id : "";
 
   const accessibleDistrictsQuery = useQuery({
     queryKey: ["dashboard-accessible-districts"],
     queryFn: () => api.get<AccessibleDistrict[]>("/dashboard/accessible-districts"),
   });
+  const centralStoresQuery = useQuery({
+    queryKey: ["dashboard-central-stores"],
+    queryFn: () => api.get<CentralStoreOption[]>("/dashboard/central-stores"),
+  });
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["dashboard-summary", selectedDistrictId],
-    queryFn: () => api.get<DashboardSummary>("/dashboard/summary", { district_id: selectedDistrictId || undefined }),
+    queryKey: ["dashboard-summary", selectedDistrictId, selectedWarehouseId],
+    queryFn: () =>
+      api.get<DashboardSummary>("/dashboard/summary", {
+        district_id: selectedDistrictId || undefined,
+        warehouse_id: selectedWarehouseId || undefined,
+      }),
   });
   const officeItemsQuery = useQuery({
-    queryKey: ["dashboard-office-items", selectedDistrictId],
+    queryKey: ["dashboard-office-items", selectedDistrictId, selectedWarehouseId],
     queryFn: () =>
-      api.get<OfficeItemSummary[]>("/dashboard/office-items", { district_id: selectedDistrictId || undefined }),
+      api.get<OfficeItemSummary[]>("/dashboard/office-items", {
+        district_id: selectedDistrictId || undefined,
+        warehouse_id: selectedWarehouseId || undefined,
+      }),
   });
 
   const scopeLabel =
-    data?.scope === "district"
-      ? `${data.district_name ?? "District"} — District Operations Overview`
-      : data?.scope === "region"
-        ? "Regional Operations Overview"
-        : data?.scope === "restricted"
-          ? "Assigned Warehouse Operations Overview"
-          : "National Operations Overview";
+    data?.scope === "warehouse"
+      ? `${data.warehouse_name ?? "Store"} — Store Operations Overview`
+      : data?.scope === "district"
+        ? `${data.district_name ?? "District"} — District Operations Overview`
+        : data?.scope === "region"
+          ? "Regional Operations Overview"
+          : data?.scope === "restricted"
+            ? "Assigned Warehouse Operations Overview"
+            : "National Operations Overview";
 
   const districts = accessibleDistrictsQuery.data ?? [];
-  const showDistrictSwitcher = districts.length > 1 || (districts.length === 1 && !user?.district_id);
+  const centralStores = centralStoresQuery.data ?? [];
+  const hasOwnDistrictOnly = districts.length === 1 && !!user?.district_id;
+  const showViewSwitcher = centralStores.length > 0 || districts.length > 1 || (districts.length === 1 && !hasOwnDistrictOnly);
 
   return (
     <div className="space-y-6">
@@ -78,22 +109,35 @@ export function DashboardPage() {
             {scopeLabel} — asset readiness, distribution progress and accountability.
           </p>
         </div>
-        {showDistrictSwitcher && (
+        {showViewSwitcher && (
           <div className="space-y-1">
-            <label className="block text-xs font-medium text-slate-500">View district</label>
+            <label className="block text-xs font-medium text-slate-500">View district / store</label>
             <Select
-              value={selectedDistrictId}
-              onChange={(e) => setSelectedDistrictId(e.target.value)}
-              className="min-w-[220px]"
+              value={selectedView}
+              onChange={(e) => setSelectedView(e.target.value)}
+              className="min-w-[240px]"
             >
               <option value="">
                 {user?.region_id ? "Regional overview (all districts)" : "National overview (all districts)"}
               </option>
-              {districts.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
+              {districts.length > 0 && (
+                <optgroup label="Districts">
+                  {districts.map((d) => (
+                    <option key={d.id} value={`district:${d.id}`}>
+                      {d.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {centralStores.length > 0 && (
+                <optgroup label="Central Stores">
+                  {centralStores.map((w) => (
+                    <option key={w.id} value={`warehouse:${w.id}`}>
+                      {w.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
           </div>
         )}
@@ -130,7 +174,11 @@ export function DashboardPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Printer size={16} /> Office &amp; Store Items
-                {data?.scope === "district" ? ` — ${data.district_name}` : " — National Summary"}
+                {data?.scope === "warehouse"
+                  ? ` — ${data.warehouse_name}`
+                  : data?.scope === "district"
+                    ? ` — ${data.district_name}`
+                    : " — National Summary"}
               </CardTitle>
               <p className="text-xs text-slate-500">
                 Every item category on hand in this store — tablets and Starlink kits alongside
