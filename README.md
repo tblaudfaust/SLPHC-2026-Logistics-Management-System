@@ -813,6 +813,43 @@ account: the one Starlink kit registered at Bo now shows in the single
 Office & Store Items table (`total:1, available:1`) alongside the
 existing office-supply categories, with no second table.
 
+## Verified working (2026-09-07) — central stores in the Dashboard view switcher
+
+Freetown Central Store is administratively attached to Western Area
+Urban (it needs a district for the geography hierarchy), so its stock
+was only ever visible folded into WAU's district overview — but items
+are frequently received there first, before onward transfer to a
+district or regional store, so it needed its own view. New
+`GET /dashboard/central-stores` lists `is_central` warehouses within the
+caller's access scope; `/dashboard/summary` and `/dashboard/office-items`
+accept a new `warehouse_id` param (mutually exclusive with `district_id`,
+access-checked via the existing `check_warehouse_access`). The district/
+geography scope-resolution shared by both endpoints was refactored into
+one `_resolve_view` helper (a `ViewScope` dataclass) instead of being
+duplicated. The Dashboard's switcher now groups Districts and Central
+Stores under `<optgroup>`s in one `<select>`. Verified live: switching to
+"Freetown-Central-Store" renders "Store Operations Overview" with that
+store's own counts, separate from Western Area Urban's.
+
+## Verified working (2026-09-07) — standardized category lists across Asset Register, Receive Stock, Transfer Stock
+
+Each screen fetched the full `/asset-categories` list and re-filtered it
+client-side by `tracking_type` independently, so they'd drifted apart:
+the Asset Register's own list filter showed quantity-tracked categories
+that can never match a registered asset (only its "Register asset"
+dialog correctly restricted to serialized), and labels were inconsistent
+("name" in most places, "name (code_prefix)" only in the Register and
+bulk-import dialogs). The Stock Counts tab also ran its own separate,
+unfiltered query. `GET /asset-categories` now accepts an optional
+`tracking_type` filter so the filtering happens once, server-side; a new
+shared hook `useAssetCategories(trackingType)` + `categoryLabel()`
+(`frontend/src/hooks/useAssetCategories.ts`) replaced every ad hoc
+fetch+filter in `AssetsPage`, `BulkImportDialog`, and every Inventory
+dialog (Receive/Transfer/Adjust/Stock Count). Verified live: the Asset
+Register's filter, Receive Stock, and Transfer Stock all now show
+correctly-scoped categories (serialized-only for Assets; quantity-only
+for the Inventory dialogs), each labeled "name (code)" consistently.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
