@@ -16,16 +16,10 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
+import { categoryLabel, useAssetCategories } from "@/hooks/useAssetCategories";
 import { ApiError, api } from "@/lib/api";
 import { parseAssetWorkbook } from "@/lib/parseAssetWorkbook";
-import type {
-  AssetCategory,
-  AssetModel,
-  BulkImportResponse,
-  BulkImportRow,
-  LocationRecord,
-  Page,
-} from "@/types";
+import type { AssetModel, BulkImportResponse, BulkImportRow, LocationRecord, Page } from "@/types";
 
 interface BulkImportDialogProps {
   open: boolean;
@@ -46,10 +40,7 @@ export function BulkImportDialog({ open, onClose, onImported }: BulkImportDialog
   const [preview, setPreview] = useState<BulkImportResponse | null>(null);
   const [result, setResult] = useState<BulkImportResponse | null>(null);
 
-  const categoriesQuery = useQuery({
-    queryKey: ["asset-categories"],
-    queryFn: () => api.get<AssetCategory[]>("/asset-categories"),
-  });
+  const categoriesQuery = useAssetCategories("serialized");
   const modelsQuery = useQuery({
     queryKey: ["asset-models", categoryId],
     queryFn: () => api.get<AssetModel[]>("/asset-models", { category_id: categoryId }),
@@ -60,7 +51,7 @@ export function BulkImportDialog({ open, onClose, onImported }: BulkImportDialog
     queryFn: () => api.get<Page<LocationRecord>>("/locations", { page_size: 100 }),
   });
 
-  const serializedCategories = (categoriesQuery.data ?? []).filter((c) => c.tracking_type === "serialized");
+  const serializedCategories = categoriesQuery.data ?? [];
 
   function reset() {
     setStep("setup");
@@ -162,7 +153,7 @@ export function BulkImportDialog({ open, onClose, onImported }: BulkImportDialog
               <option value="">Select a category...</option>
               {serializedCategories.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} ({c.code_prefix})
+                  {categoryLabel(c)}
                 </option>
               ))}
             </Select>

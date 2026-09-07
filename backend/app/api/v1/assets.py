@@ -38,8 +38,20 @@ router = APIRouter(tags=["assets"])
 # --- Catalogue: categories & models ---------------------------------------
 
 @router.get("/asset-categories", response_model=list[AssetCategoryRead])
-def list_asset_categories(db: Session = Depends(get_db), _=Depends(require_permission("assets.view"))):
-    return db.scalars(select(AssetCategory).order_by(AssetCategory.name)).all()
+def list_asset_categories(
+    tracking_type: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("assets.view")),
+):
+    """`tracking_type` ("serialized" or "quantity") lets each screen ask for
+    only the categories relevant to it — the Asset Register only ever deals
+    in serialized categories, Receive/Transfer Stock only in quantity-
+    tracked ones — instead of every caller fetching the full list and
+    re-filtering it client-side."""
+    stmt = select(AssetCategory).order_by(AssetCategory.name)
+    if tracking_type:
+        stmt = stmt.where(AssetCategory.tracking_type == tracking_type)
+    return db.scalars(stmt).all()
 
 
 @router.post("/asset-categories", response_model=AssetCategoryRead, status_code=status.HTTP_201_CREATED)

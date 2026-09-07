@@ -22,6 +22,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
+import { categoryLabel, useAssetCategories } from "@/hooks/useAssetCategories";
 import { STATUS_BADGE_VARIANT, STATUS_LABEL } from "@/lib/assetStatus";
 import { ApiError, api } from "@/lib/api";
 import type { AssetCategory, AssetListItem, AssetModel, LocationRecord, Page } from "@/types";
@@ -48,10 +49,7 @@ export function AssetsPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const queryClient = useQueryClient();
 
-  const categoriesQuery = useQuery({
-    queryKey: ["asset-categories"],
-    queryFn: () => api.get<AssetCategory[]>("/asset-categories"),
-  });
+  const categoriesQuery = useAssetCategories("serialized");
 
   const assetsQuery = useQuery({
     queryKey: ["assets", search, categoryFilter],
@@ -113,7 +111,7 @@ export function AssetsPage() {
           <option value="">All categories</option>
           {categoriesQuery.data?.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name}
+              {categoryLabel(c)}
             </option>
           ))}
         </Select>
@@ -218,17 +216,15 @@ function RegisterAssetForm({
     queryFn: () => api.get<Page<LocationRecord>>("/locations", { page_size: 100 }),
   });
 
-  const serializedCategories = categories.filter((c) => c.tracking_type === "serialized");
-
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="space-y-1.5">
         <Label htmlFor="category_id">Category</Label>
         <Select id="category_id" {...register("category_id")}>
           <option value="">Select a category...</option>
-          {serializedCategories.map((c) => (
+          {categories.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name} ({c.code_prefix})
+              {categoryLabel(c)}
             </option>
           ))}
         </Select>

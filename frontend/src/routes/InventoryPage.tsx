@@ -20,6 +20,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
+import { categoryLabel, useAssetCategories } from "@/hooks/useAssetCategories";
 import { useWarehouseOptions } from "@/hooks/useWarehouseOptions";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -136,12 +137,9 @@ function BalancesTab({
     queryKey: ["stock-balances"],
     queryFn: () => api.get<StockBalance[]>("/inventory/balances"),
   });
-  const categoriesQuery = useQuery({
-    queryKey: ["asset-categories"],
-    queryFn: () => api.get<AssetCategory[]>("/asset-categories"),
-  });
+  const categoriesQuery = useAssetCategories("quantity");
   const { options: warehouseOptions } = useWarehouseOptions();
-  const quantityCategories = (categoriesQuery.data ?? []).filter((c) => c.tracking_type === "quantity");
+  const quantityCategories = categoriesQuery.data ?? [];
 
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ["stock-balances"] });
@@ -363,7 +361,7 @@ function ReceiveForm({
                   <option value="">Select category...</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name}
+                      {categoryLabel(c)}
                     </option>
                   ))}
                   <option value={NEW_CATEGORY_VALUE}>+ Add a new item...</option>
@@ -449,7 +447,7 @@ function TransferForm({
           <option value="">Select...</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name}
+              {categoryLabel(c)}
             </option>
           ))}
         </Select>
@@ -547,7 +545,7 @@ function AdjustForm({
           <option value="">Select...</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name}
+              {categoryLabel(c)}
             </option>
           ))}
         </Select>
@@ -830,10 +828,7 @@ function StockCountsTab({ canReconcile }: { canReconcile: boolean }) {
     queryKey: ["stock-counts"],
     queryFn: () => api.get<StockCount[]>("/inventory/stock-counts"),
   });
-  const categoriesQuery = useQuery({
-    queryKey: ["asset-categories"],
-    queryFn: () => api.get<AssetCategory[]>("/asset-categories"),
-  });
+  const categoriesQuery = useAssetCategories("quantity");
   const { options: warehouseOptions } = useWarehouseOptions();
 
   const createCount = useMutation({
@@ -947,13 +942,11 @@ function StockCountsTab({ canReconcile }: { canReconcile: boolean }) {
               <div key={field.id} className="flex gap-2">
                 <Select className="flex-1" {...register(`items.${index}.category_id`)}>
                   <option value="">Category...</option>
-                  {(categoriesQuery.data ?? [])
-                    .filter((c) => c.tracking_type === "quantity")
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
+                  {(categoriesQuery.data ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {categoryLabel(c)}
+                    </option>
+                  ))}
                 </Select>
                 <Input
                   type="number"
