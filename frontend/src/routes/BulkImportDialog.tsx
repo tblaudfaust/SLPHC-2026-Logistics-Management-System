@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Upload } from "lucide-react";
 import { useState } from "react";
+import * as XLSX from "xlsx";
 
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -78,6 +79,18 @@ export function BulkImportDialog({ open, onClose, onImported }: BulkImportDialog
     onClose();
   }
 
+  function downloadTemplate() {
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["SN", "Primary SIM IMEI", "Secondary IMEI", "Box"],
+      ["354862099887766", "354862099887766", "354862099887767", "BOX-001"],
+      ["354862099887778", "354862099887778", "354862099887779", ""],
+    ]);
+    worksheet["!cols"] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 14 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Assets");
+    XLSX.writeFile(workbook, "asset_bulk_import_template.xlsx");
+  }
+
   async function handleFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     setParseError(null);
@@ -136,8 +149,12 @@ export function BulkImportDialog({ open, onClose, onImported }: BulkImportDialog
         <div className="space-y-4">
           <p className="text-sm text-slate-500">
             Upload one or more Excel files. Columns are matched by name (SN/Serial, IMEI/Primary
-            SIM IMEI, Secondary IMEI, Box) — no fixed template required.
+            SIM IMEI, Secondary IMEI, Box) — no fixed template required, but if you'd like a
+            starting point:
           </p>
+          <Button type="button" variant="secondary" size="sm" onClick={downloadTemplate}>
+            <Download size={14} /> Download template (.xlsx)
+          </Button>
 
           <div className="space-y-1.5">
             <Label htmlFor="bi_category">Category</Label>

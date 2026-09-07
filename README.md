@@ -748,6 +748,52 @@ unconfirmed), which silently broke the VPS's plain anonymous
 `git pull` — worth remembering if a future deploy fails with a GitHub
 auth error out of nowhere.
 
+## Verified working (2026-09-07) — geography-scoped access and District Operations Overview
+
+`User.region_id`/`district_id` existed in the schema since Phase 1 but were
+never enforced anywhere and never exposed in the Users UI. They're now a
+real, layered access-control scope: a district-scoped user sees only that
+district's data everywhere (Dashboard, Inventory, Warehouses, Assets); a
+region-scoped user sees every district within their region plus any
+warehouse attached to the region directly; a national user (no region or
+district set) is unrestricted, as before. An existing per-warehouse
+`UserWarehouseAccess` grant still takes precedence over geography when
+both are present — that mechanism was extended (`warehouse_access_service.py`),
+not duplicated.
+
+The national Dashboard now defaults to the caller's own geography scope
+instead of always showing national totals, and gained a district switcher
+(`GET /dashboard/accessible-districts`) so a national or regional user can
+drill into any individual district's operations overview — a
+district-scoped user simply doesn't see the switcher, since they have
+only one district. `check_district_access` blocks paging into a district
+outside a user's scope even via a hand-edited query string.
+
+Users' Region/District assignment is editable only by a System
+Administrator (same lockdown already applied to role assignment).
+
+Verified live end-to-end with a real district-scoped test account (role
+Auditor, district = Bo): confirmed the Users UI Edit dialog saves
+Region/District and shows the assigned district in the table; logged in
+as that user and confirmed `GET /dashboard/summary` with no query param
+auto-scopes to Bo (`scope:"district"`, real non-zero asset counts,
+`district_name:"Bo"`); confirmed `GET /dashboard/accessible-districts`
+returns only Bo; confirmed requesting a different district
+(`?district_id=<Western Area Urban>`) is rejected with `403 You do not
+have access to this district.`
+
+## Verified working (2026-09-07) — downloadable asset bulk-import template
+
+The Assets bulk-import dialog already parsed uploaded Excel files by
+matching column headers by name (SN/Serial, Primary/Secondary IMEI, Box) —
+no backend change was needed. Added a "Download template (.xlsx)" button
+in `BulkImportDialog.tsx` that generates a starter workbook client-side
+(same `xlsx`/SheetJS library already used to parse uploads) with the
+recognized headers and two example rows, so someone can download a
+template, fill it in, and upload it straight back through the same
+dialog. Verified: `npm run build` passes; downloaded template opens with
+the correct headers and example rows.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
