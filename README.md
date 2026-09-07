@@ -794,20 +794,24 @@ template, fill it in, and upload it straight back through the same
 dialog. Verified: `npm run build` passes; downloaded template opens with
 the correct headers and example rows.
 
-## Verified working (2026-09-07) — Census Fleet breakdown on the Dashboard
+## Verified working (2026-09-07) — Office & Store Items shows every category on hand
 
 The district switcher surfaced a gap: "Office & Store Items" deliberately
-excludes the census fleet (tablets, power banks, SIM cards, Starlink kits,
-etc.) since the KPI cards above already cover it — but only in aggregate
-across every category, so there was nowhere to see e.g. tablet counts for
-one district specifically. Added `GET /dashboard/fleet-items` (shares its
-per-category breakdown logic with `/office-items` via a new
-`_category_breakdown` helper in `dashboard.py`) and a matching "Census
-Fleet" card on the Dashboard, scoped the same way as the rest of the page
-(national/regional/district). Verified live as the Bo-scoped test account:
-the new table renders right under Office & Store Items and correctly
-shows the one Starlink kit registered at Bo (`total:1, available:1`),
-with every other fleet category at zero as expected.
+excluded the census fleet (tablets, power banks, SIM cards, Starlink kits,
+etc.) since the KPI cards above already covered it — but only in
+aggregate across every category, so there was nowhere to see e.g. tablet
+counts for one district specifically. First attempt added a second,
+separate "Census Fleet" card — reverted per feedback: a district's store
+shouldn't be split into two tables by an arbitrary curated-category
+list. `office_items_summary` in `dashboard.py` now iterates every
+`AssetCategory` (not a hardcoded name list) and returns Total/Available
+for whichever ones actually have stock in the caller's scope, omitting
+only categories with nothing on hand — one single, complete "what's in
+this store" table, scoped the same way as the rest of the page
+(national/regional/district). Verified live as the Bo-scoped test
+account: the one Starlink kit registered at Bo now shows in the single
+Office & Store Items table (`total:1, available:1`) alongside the
+existing office-supply categories, with no second table.
 
 ## Local (non-Docker) frontend dev
 

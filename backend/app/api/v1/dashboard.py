@@ -13,41 +13,6 @@ from app.services.warehouse_access_service import check_district_access, get_all
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# Curated, not "every category" — the national KPI cards above already cover
-# the census-specific fleet (tablets, power banks, SIM cards, etc.); this is
-# a separate, deliberately short "office/administrative supplies" glance for
-# what keeps a district office running day to day. Matched by name so it
-# degrades gracefully (just omits a row) if a deployment doesn't have one of
-# these categories seeded.
-OFFICE_ITEM_CATEGORY_NAMES = [
-    "Laptops",
-    "Desktop Computers",
-    "Printers and Scanners",
-    "Printer Ink & Toner",
-    "UPS Devices",
-    "Stationery",
-    "Furniture",
-    "Chargers and USB Cables",
-]
-
-# The census-specific fleet the KPI cards above only ever show in aggregate
-# (all categories combined) — this is the per-category breakdown asked for
-# after the district switcher shipped: "there's no tablets in Office &
-# Store Items for [a district]" turned out to mean there was nowhere on the
-# Dashboard to see tablets *by category* at all, aggregate KPIs aside.
-FLEET_CATEGORY_NAMES = [
-    "Android Tablets",
-    "Android-Tablet",
-    "Smartphones",
-    "Power Banks",
-    "SIM Cards",
-    "Starlink Kits",
-    "MiFi Devices / Modems",
-    "GPS Devices",
-    "Solar Chargers",
-]
-
-
 def _district_location_ids(db: Session, district_id: uuid.UUID) -> list[uuid.UUID]:
     return list(db.scalars(select(Location.id).where(Location.district_id == district_id)).all())
 
@@ -173,19 +138,25 @@ def _resolve_scope_location_ids(
     return get_allowed_warehouse_ids(db, current_user)
 
 
-def _category_breakdown(
-    db: Session, category_names: list[str], location_ids: list[uuid.UUID] | set[uuid.UUID] | None
-) -> list[dict]:
-    """Per-category Total/Available for a curated, ordered list of category
-    names — shared by the "Office & Store Items" and "Census Fleet" glances.
-    Matched by name so it degrades gracefully (just omits a row) if a
-    deployment doesn't have one of these categories seeded. For a
-    quantity-tracked category, "available" is the same as "total": all
-    on-hand quantity in a warehouse is available by definition, there's no
-    separate allocation sub-state for consumables the way there is for
+@router.get("/office-items")
+def office_items_summary(
+    district_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("dashboard.view")),
+):
+    """Per-category Total/Available for every category actually held in the
+    caller's store (national, region, or — with `district_id` — one
+    district), not a curated subset: this single table is meant to answer
+    "what's in this store" in full, tablets and Starlink kits included
+    alongside laptops and stationery, rather than splitting "office
+    supplies" from "census fleet" into separate glances. A category with
+    nothing on hand in scope is omitted rather than shown as a zero row.
+    For a quantity-tracked category, "available" is the same as "total":
+    all on-hand quantity in a warehouse is available by definition, there's
+    no separate allocation sub-state for consumables the way there is for
     serialized equipment."""
-    categories = db.scalars(select(AssetCategory).where(AssetCategory.name.in_(category_names))).all()
-    categories_by_name = {c.name: c for c in categories}
+    location_ids = _resolve_scope_location_ids(db, current_user, district_id)
+    categories = db.scalars(select(AssetCategory).order_by(AssetCategory.name)).all()
 
     quantity_category_ids = [c.id for c in categories if c.tracking_type == "quantity"]
     on_hand_by_category: dict = {}
@@ -212,45 +183,20 @@ def _category_breakdown(
         available_by_category = dict(db.execute(available_stmt.group_by(Asset.category_id)).all())
 
     results = []
-    for name in category_names:
-        category = categories_by_name.get(name)
-        if not category:
-            continue
+    for category in categories:
         if category.tracking_type == "quantity":
             on_hand = on_hand_by_category.get(category.id, 0) or 0
-            results.append({"category_name": name, "tracking_type": "quantity", "total": on_hand, "available": on_hand})
+            if on_hand == 0:
+                continue
+            results.append(
+                {"category_name": category.name, "tracking_type": "quantity", "total": on_hand, "available": on_hand}
+            )
         else:
             total = total_by_category.get(category.id, 0) or 0
+            if total == 0:
+                continue
             available = available_by_category.get(category.id, 0) or 0
             results.append(
-                {"category_name": name, "tracking_type": "serialized", "total": total, "available": available}
+                {"category_name": category.name, "tracking_type": "serialized", "total": total, "available": available}
             )
     return results
-
-
-@router.get("/office-items")
-def office_items_summary(
-    district_id: uuid.UUID | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("dashboard.view")),
-):
-    """National (or, with `district_id`, district-scoped) at-a-glance stock
-    of office/administrative supplies — a quick-insight companion to the
-    fleet KPIs above, not a replacement for the full detail already
-    available by drilling into Inventory (per-warehouse balances) or the
-    Asset register (per-unit status)."""
-    location_ids = _resolve_scope_location_ids(db, current_user, district_id)
-    return _category_breakdown(db, OFFICE_ITEM_CATEGORY_NAMES, location_ids)
-
-
-@router.get("/fleet-items")
-def fleet_items_summary(
-    district_id: uuid.UUID | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("dashboard.view")),
-):
-    """Same shape as /office-items, but for the census-specific fleet
-    (tablets, smartphones, power banks, SIM cards, Starlink kits, etc.) that
-    the KPI cards above only ever show combined across every category."""
-    location_ids = _resolve_scope_location_ids(db, current_user, district_id)
-    return _category_breakdown(db, FLEET_CATEGORY_NAMES, location_ids)
