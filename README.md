@@ -850,6 +850,44 @@ Register's filter, Receive Stock, and Transfer Stock all now show
 correctly-scoped categories (serialized-only for Assets; quantity-only
 for the Inventory dialogs), each labeled "name (code)" consistently.
 
+## Verified working (2026-09-07) — serialized-asset transfers between warehouses
+
+Standardizing the category lists (above) surfaced a real gap, not just a
+display inconsistency: Receive Stock / Transfer Stock only ever handle
+quantity-tracked categories, since their ledger has no per-unit identity
+— a serialized asset like a tablet only ever got a location at
+registration and had no way to formally move between warehouses
+afterward. That's a real hole in "every movement is traceable" for
+exactly the fleet items (tablets, Starlink kits) that matter most.
+
+Added a two-phase `AssetTransfer` (migration `0013`, mirrors
+`StockTransfer`'s IN_TRANSIT/RECEIVED lifecycle) with `AssetTransferItem`
+rows picking specific units by asset tag/serial rather than a bulk
+quantity. Dispatch (`POST /assets/transfers`) flips each picked asset to
+IN_TRANSIT immediately — its location stays at the source until receipt
+is confirmed, matching how a manual status change already behaves —
+and rejects assets that aren't AVAILABLE at the selected source
+warehouse. Receive (`POST /assets/transfers/{id}/receive`) moves them to
+the destination and appends a `transfer_received` journey event per
+unit. Reuses the existing `inventory.transfer`/`inventory.receive`
+permissions (same operational action, different resource type) rather
+than adding a new permission no role has been granted. `GET /assets`
+gained a `location_id` filter for the "pick units currently at this
+warehouse" picker. The Asset Register page now has a Register/Transfers
+tab split, with a "Transfer assets" dialog to pick specific AVAILABLE
+units by tag/serial/category.
+
+Verified live end-to-end: registered two test tablets at
+Bo-District-Office, dispatched a transfer to
+Western-Area-Urban-District-Office (both flipped to IN_TRANSIT, location
+unchanged), confirmed a second dispatch attempt on an already-IN_TRANSIT
+asset is rejected (400), then received the transfer — both assets
+correctly landed at the destination with `status: AVAILABLE`, and each
+asset's `/journey` log shows the full `registered` →
+`transfer_dispatched` → `transfer_received` history. The Transfers tab
+renders the completed transfer with both asset tags, route, and
+released/received-by names.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
