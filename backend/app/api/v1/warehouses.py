@@ -26,7 +26,7 @@ def list_warehouses(
     stmt = select(Warehouse)
     if params.search:
         stmt = stmt.where(Warehouse.code.ilike(f"%{params.search}%"))
-    allowed = get_allowed_warehouse_ids(current_user)
+    allowed = get_allowed_warehouse_ids(db, current_user)
     if allowed is not None:
         stmt = stmt.where(Warehouse.location_id.in_(allowed))
     return paginate(db, stmt, Warehouse, params, WarehouseRead)

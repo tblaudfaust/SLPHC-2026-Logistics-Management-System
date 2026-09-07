@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -34,9 +35,11 @@ import { useWarehouseOptions } from "@/hooks/useWarehouseOptions";
 import { ApiError, api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import type {
+  District,
   EffectivePermission,
   Page,
   PasswordResetResult,
+  Region,
   Role,
   UserDeleteResult,
   UserRecord,
@@ -50,6 +53,8 @@ const createUserSchema = z.object({
   last_name: z.string().min(1, "Required"),
   phone: z.string().optional(),
   role_ids: z.array(z.string()).default([]),
+  region_id: z.string().optional(),
+  district_id: z.string().optional(),
 });
 
 type CreateUserValues = z.infer<typeof createUserSchema>;
@@ -61,6 +66,8 @@ const editUserSchema = z.object({
   phone: z.string().optional(),
   is_active: z.boolean(),
   role_ids: z.array(z.string()).default([]),
+  region_id: z.string().optional(),
+  district_id: z.string().optional(),
 });
 
 type EditUserValues = z.infer<typeof editUserSchema>;
@@ -88,8 +95,18 @@ export function UsersPage() {
     queryFn: () => api.get<Role[]>("/roles"),
   });
 
+  const regionsQuery = useQuery({ queryKey: ["regions"], queryFn: () => api.get<Region[]>("/regions") });
+  const districtsQuery = useQuery({ queryKey: ["districts"], queryFn: () => api.get<District[]>("/districts") });
+  const regionsById = new Map((regionsQuery.data ?? []).map((r) => [r.id, r]));
+  const districtsById = new Map((districtsQuery.data ?? []).map((d) => [d.id, d]));
+
   const createUser = useMutation({
-    mutationFn: (values: CreateUserValues) => api.post<UserRecord>("/users", values),
+    mutationFn: (values: CreateUserValues) =>
+      api.post<UserRecord>("/users", {
+        ...values,
+        region_id: values.region_id || undefined,
+        district_id: values.district_id || undefined,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       setDialogOpen(false);
@@ -134,6 +151,7 @@ export function UsersPage() {
               <TableHeaderCell>Name</TableHeaderCell>
               <TableHeaderCell>Email</TableHeaderCell>
               <TableHeaderCell>Roles</TableHeaderCell>
+              <TableHeaderCell>Geography scope</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
               <TableHeaderCell>Last login</TableHeaderCell>
               <TableHeaderCell></TableHeaderCell>
@@ -153,6 +171,13 @@ export function UsersPage() {
                     ))}
                     {u.roles.length === 0 && <span className="text-xs text-slate-400">No role</span>}
                   </div>
+                </TableCell>
+                <TableCell>
+                  {u.district_id
+                    ? districtsById.get(u.district_id)?.name ?? "-"
+                    : u.region_id
+                      ? `${regionsById.get(u.region_id)?.name ?? "-"} (region)`
+                      : <span className="text-xs text-slate-400">National</span>}
                 </TableCell>
                 <TableCell>
                   <Badge variant={u.is_active ? "success" : "neutral"}>
@@ -218,7 +243,7 @@ export function UsersPage() {
             ))}
             {usersQuery.data.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-slate-400">
+                <TableCell colSpan={7} className="py-8 text-center text-slate-400">
                   No users found.
                 </TableCell>
               </TableRow>
@@ -230,6 +255,8 @@ export function UsersPage() {
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Create user">
         <CreateUserForm
           roles={rolesQuery.data ?? []}
+          regions={regionsQuery.data ?? []}
+          districts={districtsQuery.data ?? []}
           submitting={createUser.isPending}
           serverError={createUser.error instanceof ApiError ? createUser.error.message : null}
           onSubmit={(values) => createUser.mutate(values)}
@@ -240,6 +267,8 @@ export function UsersPage() {
         <EditUserDialog
           user={editingUser}
           roles={rolesQuery.data ?? []}
+          regions={regionsQuery.data ?? []}
+          districts={districtsQuery.data ?? []}
           isSystemAdmin={isSystemAdmin}
           onClose={() => setEditingUser(null)}
         />
@@ -446,11 +475,15 @@ function WarehouseAccessDialog({ user, onClose }: { user: UserRecord; onClose: (
 function EditUserDialog({
   user,
   roles,
+  regions,
+  districts,
   isSystemAdmin,
   onClose,
 }: {
   user: UserRecord;
   roles: Role[];
+  regions: Region[];
+  districts: District[];
   isSystemAdmin: boolean;
   onClose: () => void;
 }) {
@@ -458,6 +491,7 @@ function EditUserDialog({
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<EditUserValues>({
     resolver: zodResolver(editUserSchema),
@@ -468,14 +502,22 @@ function EditUserDialog({
       phone: user.phone ?? "",
       is_active: user.is_active,
       role_ids: user.roles.map((r) => r.id),
+      region_id: user.region_id ?? "",
+      district_id: user.district_id ?? "",
     },
   });
+  const selectedRegionId = watch("region_id");
+  const visibleDistricts = selectedRegionId ? districts.filter((d) => d.region_id === selectedRegionId) : districts;
 
   const updateMutation = useMutation({
     mutationFn: (values: EditUserValues) => {
-      const { role_ids, ...rest } = values;
+      const { role_ids, region_id, district_id, ...rest } = values;
       const payload: Record<string, unknown> = { ...rest, phone: values.phone || null };
-      if (isSystemAdmin) payload.role_ids = role_ids;
+      if (isSystemAdmin) {
+        payload.role_ids = role_ids;
+        payload.region_id = region_id || null;
+        payload.district_id = district_id || null;
+      }
       return api.put(`/users/${user.id}`, payload);
     },
     onSuccess: () => {
@@ -515,6 +557,34 @@ function EditUserDialog({
           <Checkbox {...register("is_active")} />
           Account active
         </label>
+
+        <div className="space-y-1.5">
+          <Label>Geography scope</Label>
+          {isSystemAdmin ? (
+            <div className="grid grid-cols-2 gap-4">
+              <Select {...register("region_id")}>
+                <option value="">National (no region)</option>
+                {regions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </Select>
+              <Select {...register("district_id")}>
+                <option value="">No single district</option>
+                {visibleDistricts.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </Select>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400">
+              Only a System Administrator can change a user's region/district scope.
+            </p>
+          )}
+          <p className="text-xs text-slate-500">
+            Leave both unset for national access. Setting a region grants access to every district
+            within it; setting a district restricts to that district alone.
+          </p>
+        </div>
 
         <div className="space-y-1.5">
           <Label>Roles</Label>
@@ -682,11 +752,15 @@ function UserPermissionsDialog({ user, onClose }: { user: UserRecord; onClose: (
 
 function CreateUserForm({
   roles,
+  regions,
+  districts,
   submitting,
   serverError,
   onSubmit,
 }: {
   roles: Role[];
+  regions: Region[];
+  districts: District[];
   submitting: boolean;
   serverError: string | null;
   onSubmit: (values: CreateUserValues) => void;
@@ -694,11 +768,14 @@ function CreateUserForm({
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<CreateUserValues>({
     resolver: zodResolver(createUserSchema),
     defaultValues: { role_ids: [] },
   });
+  const selectedRegionId = watch("region_id");
+  const visibleDistricts = selectedRegionId ? districts.filter((d) => d.region_id === selectedRegionId) : districts;
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -730,6 +807,28 @@ function CreateUserForm({
       <div className="space-y-1.5">
         <Label htmlFor="phone">Phone (optional)</Label>
         <Input id="phone" {...register("phone")} />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Geography scope</Label>
+        <div className="grid grid-cols-2 gap-4">
+          <Select {...register("region_id")}>
+            <option value="">National (no region)</option>
+            {regions.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </Select>
+          <Select {...register("district_id")}>
+            <option value="">No single district</option>
+            {visibleDistricts.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </Select>
+        </div>
+        <p className="text-xs text-slate-500">
+          Leave both unset for national access. Setting a region grants access to every district
+          within it; setting a district restricts to that district alone.
+        </p>
       </div>
 
       <div className="space-y-1.5">

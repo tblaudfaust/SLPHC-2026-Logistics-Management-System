@@ -10,9 +10,11 @@ import {
   Truck,
   Users2,
 } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -24,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
-import type { DashboardSummary, OfficeItemSummary } from "@/types";
+import type { AccessibleDistrict, DashboardSummary, OfficeItemSummary } from "@/types";
 
 const kpiCards: { key: keyof DashboardSummary; label: string; icon: typeof Boxes }[] = [
   { key: "total_assets", label: "Total Assets", icon: Boxes },
@@ -37,24 +39,64 @@ const kpiCards: { key: keyof DashboardSummary; label: string; icon: typeof Boxes
 
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
+  const [selectedDistrictId, setSelectedDistrictId] = useState("");
+
+  const accessibleDistrictsQuery = useQuery({
+    queryKey: ["dashboard-accessible-districts"],
+    queryFn: () => api.get<AccessibleDistrict[]>("/dashboard/accessible-districts"),
+  });
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["dashboard-summary"],
-    queryFn: () => api.get<DashboardSummary>("/dashboard/summary"),
+    queryKey: ["dashboard-summary", selectedDistrictId],
+    queryFn: () => api.get<DashboardSummary>("/dashboard/summary", { district_id: selectedDistrictId || undefined }),
   });
   const officeItemsQuery = useQuery({
-    queryKey: ["dashboard-office-items"],
-    queryFn: () => api.get<OfficeItemSummary[]>("/dashboard/office-items"),
+    queryKey: ["dashboard-office-items", selectedDistrictId],
+    queryFn: () =>
+      api.get<OfficeItemSummary[]>("/dashboard/office-items", { district_id: selectedDistrictId || undefined }),
   });
+
+  const scopeLabel =
+    data?.scope === "district"
+      ? `${data.district_name ?? "District"} — District Operations Overview`
+      : data?.scope === "region"
+        ? "Regional Operations Overview"
+        : data?.scope === "restricted"
+          ? "Assigned Warehouse Operations Overview"
+          : "National Operations Overview";
+
+  const districts = accessibleDistrictsQuery.data ?? [];
+  const showDistrictSwitcher = districts.length > 1 || (districts.length === 1 && !user?.district_id);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900">
-          Welcome, {user?.first_name ?? "Officer"}
-        </h1>
-        <p className="text-sm text-slate-500">
-          National operations overview — asset readiness, distribution progress and accountability.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">
+            Welcome, {user?.first_name ?? "Officer"}
+          </h1>
+          <p className="text-sm text-slate-500">
+            {scopeLabel} — asset readiness, distribution progress and accountability.
+          </p>
+        </div>
+        {showDistrictSwitcher && (
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-slate-500">View district</label>
+            <Select
+              value={selectedDistrictId}
+              onChange={(e) => setSelectedDistrictId(e.target.value)}
+              className="min-w-[220px]"
+            >
+              <option value="">
+                {user?.region_id ? "Regional overview (all districts)" : "National overview (all districts)"}
+              </option>
+              {districts.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
       </div>
 
       {isLoading && (
@@ -87,7 +129,8 @@ export function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Printer size={16} /> Office &amp; Store Items — National Summary
+                <Printer size={16} /> Office &amp; Store Items
+                {data?.scope === "district" ? ` — ${data.district_name}` : " — National Summary"}
               </CardTitle>
               <p className="text-xs text-slate-500">
                 Quick stock insight for what keeps district offices running — laptops, printers,

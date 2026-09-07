@@ -49,10 +49,10 @@ def get_stock_balances(
         )
     )
     if warehouse_id:
-        check_warehouse_access(current_user, warehouse_id)
+        check_warehouse_access(db, current_user, warehouse_id)
         stmt = stmt.where(InventoryTransaction.warehouse_id == warehouse_id)
     else:
-        allowed = get_allowed_warehouse_ids(current_user)
+        allowed = get_allowed_warehouse_ids(db, current_user)
         if allowed is not None:
             stmt = stmt.where(InventoryTransaction.warehouse_id.in_(allowed))
 
@@ -81,10 +81,10 @@ def list_transactions(
         selectinload(InventoryTransaction.related_warehouse),
     )
     if warehouse_id:
-        check_warehouse_access(current_user, warehouse_id)
+        check_warehouse_access(db, current_user, warehouse_id)
         stmt = stmt.where(InventoryTransaction.warehouse_id == warehouse_id)
     else:
-        allowed = get_allowed_warehouse_ids(current_user)
+        allowed = get_allowed_warehouse_ids(db, current_user)
         if allowed is not None:
             stmt = stmt.where(InventoryTransaction.warehouse_id.in_(allowed))
     if category_id:
@@ -100,7 +100,7 @@ def create_goods_receipt(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("inventory.receive")),
 ):
-    check_warehouse_access(current_user, payload.warehouse_id)
+    check_warehouse_access(db, current_user, payload.warehouse_id)
     receipt, rows, created_categories = inventory_service.create_goods_receipt(
         db, warehouse_id=payload.warehouse_id, supplier_id=payload.supplier_id,
         procurement_id=payload.procurement_id, received_by_name=current_user.full_name,
@@ -172,10 +172,10 @@ def list_goods_receipts(
         selectinload(GoodsReceipt.supplier), selectinload(GoodsReceipt.warehouse)
     )
     if warehouse_id:
-        check_warehouse_access(current_user, warehouse_id)
+        check_warehouse_access(db, current_user, warehouse_id)
         stmt = stmt.where(GoodsReceipt.warehouse_id == warehouse_id)
     else:
-        allowed = get_allowed_warehouse_ids(current_user)
+        allowed = get_allowed_warehouse_ids(db, current_user)
         if allowed is not None:
             stmt = stmt.where(GoodsReceipt.warehouse_id.in_(allowed))
 
@@ -226,7 +226,7 @@ def list_stock_transfers(
     current_user: User = Depends(require_permission("inventory.view")),
 ):
     stmt = _transfer_read_query()
-    allowed = get_allowed_warehouse_ids(current_user)
+    allowed = get_allowed_warehouse_ids(db, current_user)
     if allowed is not None:
         stmt = stmt.where(
             (StockTransfer.from_warehouse_id.in_(allowed)) | (StockTransfer.to_warehouse_id.in_(allowed))
@@ -244,7 +244,7 @@ def create_stock_transfer(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("inventory.transfer")),
 ):
-    check_warehouse_access(current_user, payload.from_warehouse_id)
+    check_warehouse_access(db, current_user, payload.from_warehouse_id)
     transfer, out_row = inventory_service.dispatch_transfer(
         db, category_id=payload.category_id, from_warehouse_id=payload.from_warehouse_id,
         to_warehouse_id=payload.to_warehouse_id, quantity=payload.quantity,
@@ -290,7 +290,7 @@ def receive_stock_transfer(
     transfer = db.get(StockTransfer, transfer_id)
     if not transfer:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Transfer not found.")
-    check_warehouse_access(current_user, transfer.to_warehouse_id)
+    check_warehouse_access(db, current_user, transfer.to_warehouse_id)
 
     in_row = inventory_service.receive_transfer(
         db, transfer=transfer, received_by_name=current_user.full_name, performed_by_id=current_user.id,
@@ -325,7 +325,7 @@ def create_stock_adjustment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("inventory.adjust")),
 ):
-    check_warehouse_access(current_user, payload.warehouse_id)
+    check_warehouse_access(db, current_user, payload.warehouse_id)
     row = inventory_service.record_adjustment(
         db, warehouse_id=payload.warehouse_id, category_id=payload.category_id,
         quantity_delta=payload.quantity_delta, reason=payload.reason, performed_by_id=current_user.id,
@@ -369,10 +369,10 @@ def list_stock_counts(
 ):
     stmt = _stock_count_read_query().order_by(StockCount.count_date.desc())
     if warehouse_id:
-        check_warehouse_access(current_user, warehouse_id)
+        check_warehouse_access(db, current_user, warehouse_id)
         stmt = stmt.where(StockCount.warehouse_id == warehouse_id)
     else:
-        allowed = get_allowed_warehouse_ids(current_user)
+        allowed = get_allowed_warehouse_ids(db, current_user)
         if allowed is not None:
             stmt = stmt.where(StockCount.warehouse_id.in_(allowed))
     return db.scalars(stmt).all()
@@ -384,7 +384,7 @@ def create_stock_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("inventory.reconcile")),
 ):
-    check_warehouse_access(current_user, payload.warehouse_id)
+    check_warehouse_access(db, current_user, payload.warehouse_id)
     stock_count = StockCount(
         warehouse_id=payload.warehouse_id, count_date=payload.count_date,
         counted_by_id=current_user.id, notes=payload.notes,
@@ -417,7 +417,7 @@ def finalize_stock_count(
     ).scalar_one_or_none()
     if not stock_count:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Stock count not found.")
-    check_warehouse_access(current_user, stock_count.warehouse_id)
+    check_warehouse_access(db, current_user, stock_count.warehouse_id)
 
     inventory_service.finalize_stock_count(db, stock_count, performed_by_id=current_user.id)
     audit_service.record(

@@ -105,8 +105,17 @@ def update_user(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
 
-    if payload.role_ids is not None and "System Administrator" not in {r.name for r in current_user.roles}:
+    is_admin = "System Administrator" in {r.name for r in current_user.roles}
+    if payload.role_ids is not None and not is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a System Administrator can change a user's roles.")
+    geography_changed = (
+        (payload.region_id is not None and payload.region_id != user.region_id)
+        or (payload.district_id is not None and payload.district_id != user.district_id)
+    )
+    if geography_changed and not is_admin:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only a System Administrator can change a user's region/district scope."
+        )
 
     if payload.is_active is False and user_id == current_user.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot disable your own account.")

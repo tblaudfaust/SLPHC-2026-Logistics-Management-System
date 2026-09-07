@@ -30,6 +30,7 @@ from app.schemas.asset import (
 from app.schemas.common import Page, PaginationParams
 from app.services import asset_service, audit_service, notification_service
 from app.services.pagination import paginate
+from app.services.warehouse_access_service import get_allowed_warehouse_ids
 
 router = APIRouter(tags=["assets"])
 
@@ -103,9 +104,12 @@ def list_assets(
     category_id: uuid.UUID | None = None,
     status_filter: str | None = None,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("assets.view")),
+    current_user: User = Depends(require_permission("assets.view")),
 ):
     stmt = select(Asset)
+    allowed = get_allowed_warehouse_ids(db, current_user)
+    if allowed is not None:
+        stmt = stmt.where(Asset.current_location_id.in_(allowed))
     if category_id:
         stmt = stmt.where(Asset.category_id == category_id)
     if status_filter:

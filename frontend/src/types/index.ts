@@ -386,6 +386,9 @@ export interface OfficeItemSummary {
 }
 
 export interface DashboardSummary {
+  scope: "national" | "region" | "district" | "restricted";
+  district_id: string | null;
+  district_name: string | null;
   total_assets: number;
   available: number;
   allocated: number;
@@ -401,6 +404,13 @@ export interface DashboardSummary {
   regions_count: number;
   districts_count: number;
   users_count: number;
+}
+
+export interface AccessibleDistrict {
+  id: string;
+  name: string;
+  code: string;
+  region_id: string;
 }
 
 // ---- ICT & Connectivity Assets: Starlink Management ----
