@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ChevronRight, Plus, Radio, Wrench, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, Plus, Radio, Upload, Wrench, X } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
@@ -22,6 +22,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
+import { StarlinkBulkImportDialog } from "@/routes/StarlinkBulkImportDialog";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/authStore";
@@ -419,6 +420,7 @@ function InventoryTab({
   canManage, presetFilter, onClearPreset,
 }: { canManage: boolean; presetFilter: KitFilter | null; onClearPreset: () => void }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [kitTypeFilter, setKitTypeFilter] = useState("");
   const queryClient = useQueryClient();
 
@@ -512,9 +514,14 @@ function InventoryTab({
           </Select>
         )}
         {canManage && (
-          <Button onClick={() => setDialogOpen(true)}>
-            <Plus size={16} /> Register Starlink kit
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setBulkImportOpen(true)}>
+              <Upload size={16} /> Bulk import
+            </Button>
+            <Button onClick={() => setDialogOpen(true)}>
+              <Plus size={16} /> Register Starlink kit
+            </Button>
+          </div>
         )}
       </div>
 
@@ -672,6 +679,15 @@ function InventoryTab({
           </Button>
         </form>
       </Dialog>
+
+      <StarlinkBulkImportDialog
+        open={bulkImportOpen}
+        onClose={() => setBulkImportOpen(false)}
+        onImported={() => {
+          queryClient.invalidateQueries({ queryKey: ["starlink-kits"] });
+          queryClient.invalidateQueries({ queryKey: ["starlink-dashboard"] });
+        }}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.asset import Asset, AssetCategory
+from app.models.asset import Asset, AssetCategory, AssetStatusEvent
 from app.models.starlink import (
     FieldTeam,
     HardToReachArea,
@@ -20,9 +20,11 @@ from app.models.starlink import (
     StarlinkSubscriptionPayment,
     StarlinkTeamAssignment,
 )
+from app.schemas.starlink import StarlinkBulkImportRow, StarlinkBulkImportRowError
 from app.services import asset_service, audit_service
 
 STARLINK_CATEGORY_NAME = "Starlink Kits"
+MAX_REPORTED_BULK_IMPORT_ERRORS = 200
 
 
 def get_starlink_category(db: Session) -> AssetCategory:
@@ -107,6 +109,126 @@ def create_kit(
     )
     db.flush()
     return kit
+
+
+def validate_bulk_kit_rows(
+    db: Session, *, rows: list[StarlinkBulkImportRow]
+) -> tuple[list[StarlinkBulkImportRow], list[StarlinkBulkImportRowError]]:
+    """Same checks-then-report shape as asset_service.validate_bulk_rows —
+    required fields, duplicates within the uploaded file, and duplicates
+    against kits already registered — before any DB write."""
+    errors: list[StarlinkBulkImportRowError] = []
+    seen_serials: dict[str, int] = {}
+    seen_terminals: dict[str, int] = {}
+    candidates: list[StarlinkBulkImportRow] = []
+
+    for row in rows:
+        if row.kit_type not in ("FIXED", "ROAMING"):
+            errors.append(StarlinkBulkImportRowError(
+                row_number=row.row_number, serial_number=row.serial_number,
+                reason="kit_type must be FIXED or ROAMING.",
+            ))
+            continue
+        if row.serial_number and row.serial_number in seen_serials:
+            errors.append(StarlinkBulkImportRowError(
+                row_number=row.row_number, serial_number=row.serial_number,
+                reason=f"Duplicate serial number — also on row {seen_serials[row.serial_number]} in this file.",
+            ))
+            continue
+        if row.terminal_id and row.terminal_id in seen_terminals:
+            errors.append(StarlinkBulkImportRowError(
+                row_number=row.row_number, serial_number=row.serial_number,
+                reason=f"Duplicate terminal ID — also on row {seen_terminals[row.terminal_id]} in this file.",
+            ))
+            continue
+        if row.serial_number:
+            seen_serials[row.serial_number] = row.row_number
+        if row.terminal_id:
+            seen_terminals[row.terminal_id] = row.row_number
+        candidates.append(row)
+
+    existing_serials: set[str] = set()
+    existing_terminals: set[str] = set()
+    serials_to_check = [r.serial_number for r in candidates if r.serial_number]
+    terminals_to_check = [r.terminal_id for r in candidates if r.terminal_id]
+    if serials_to_check:
+        existing_serials = set(
+            db.scalars(select(Asset.serial_number).where(Asset.serial_number.in_(serials_to_check))).all()
+        )
+    if terminals_to_check:
+        existing_terminals = set(
+            db.scalars(select(StarlinkKit.terminal_id).where(StarlinkKit.terminal_id.in_(terminals_to_check))).all()
+        )
+
+    valid_rows: list[StarlinkBulkImportRow] = []
+    for row in candidates:
+        if row.serial_number and row.serial_number in existing_serials:
+            errors.append(StarlinkBulkImportRowError(
+                row_number=row.row_number, serial_number=row.serial_number,
+                reason="Serial number already registered in the asset register.",
+            ))
+            continue
+        if row.terminal_id and row.terminal_id in existing_terminals:
+            errors.append(StarlinkBulkImportRowError(
+                row_number=row.row_number, serial_number=row.serial_number,
+                reason="Terminal ID already registered to another kit.",
+            ))
+            continue
+        valid_rows.append(row)
+
+    errors.sort(key=lambda e: e.row_number)
+    return valid_rows, errors
+
+
+def bulk_register_kits(
+    db: Session,
+    *,
+    current_location_id: uuid.UUID | None,
+    funding_source_id: uuid.UUID | None,
+    rows: list[StarlinkBulkImportRow],
+    performed_by_id: uuid.UUID | None,
+) -> list[StarlinkKit]:
+    """Reserves a contiguous block of the Starlink category's asset-tag
+    sequence in one locked update, same principle as
+    asset_service.bulk_register_assets, then creates each row's paired
+    Asset + StarlinkKit row. Realistic Starlink shipment sizes (dozens, not
+    the tens of thousands a tablet import anticipates) don't need that
+    function's batch-insert-then-flush-once optimization — one flush per
+    row (needed anyway to get the Asset's id before creating its
+    StarlinkKit) is plenty fast here."""
+    category = get_starlink_category(db)
+    locked = db.execute(
+        select(AssetCategory).where(AssetCategory.id == category.id).with_for_update()
+    ).scalar_one()
+    start_sequence = locked.next_sequence + 1
+    locked.next_sequence += len(rows)
+
+    now = datetime.now(timezone.utc)
+    kits: list[StarlinkKit] = []
+    for offset, row in enumerate(rows):
+        asset_tag = f"SLPHC26-{locked.code_prefix}-{start_sequence + offset:06d}"
+        asset = Asset(
+            asset_tag=asset_tag, category_id=category.id, serial_number=row.serial_number,
+            current_location_id=current_location_id, created_by_id=performed_by_id,
+        )
+        db.add(asset)
+        db.flush()
+
+        db.add(AssetStatusEvent(
+            asset_id=asset.id, event_type="registered", performed_by_id=performed_by_id,
+            new_status=asset.status, new_location_id=asset.current_location_id,
+            condition=asset.condition, reason="Bulk import (Starlink)", created_at=now,
+        ))
+
+        kit = StarlinkKit(
+            asset_id=asset.id, kit_type=row.kit_type, terminal_id=row.terminal_id,
+            router_serial_number=row.router_serial_number, funding_source_id=funding_source_id,
+        )
+        db.add(kit)
+        kits.append(kit)
+
+    db.flush()
+    return kits
 
 
 def record_installation(db, kit: StarlinkKit, payload, performed_by_id) -> StarlinkInstallation:

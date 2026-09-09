@@ -1,11 +1,11 @@
 import uuid
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_permission
+from app.api.deps import client_ip, client_user_agent, get_db, require_permission
 from app.models.asset import Asset
 from app.models.location import District
 from app.models.starlink import (
@@ -39,6 +39,8 @@ from app.schemas.starlink import (
     StarlinkFaultUpdate,
     StarlinkInstallationCreate,
     StarlinkInstallationRead,
+    StarlinkBulkImportRequest,
+    StarlinkBulkImportResponse,
     StarlinkKitCreate,
     StarlinkKitRead,
     StarlinkKitUpdate,
@@ -283,6 +285,57 @@ def create_kit(
     db.commit()
     db.refresh(kit)
     return kit
+
+
+# NOTE: /bulk-import must be registered before GET/PUT "/{kit_id}" below —
+# same route-ordering rule as /faults (see the longer comment further
+# down): a literal segment registered after a same-arity {variable} route
+# would never be reached, since Starlette tries routes in registration
+# order and FastAPI would attempt (and fail) to parse "bulk-import" as a
+# kit_id UUID instead of falling through to this one.
+@router.post("/bulk-import", response_model=StarlinkBulkImportResponse)
+def bulk_import_kits(
+    payload: StarlinkBulkImportRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("starlink.manage")),
+):
+    """Brief §19.1/§19.2 pattern applied to Starlink kits: the frontend
+    parses the workbook client-side and sends structured rows; call with
+    commit=false first to preview (no DB writes), then again with
+    commit=true once reviewed."""
+    valid_rows, errors = starlink_service.validate_bulk_kit_rows(db, rows=payload.rows)
+
+    if not payload.commit:
+        return StarlinkBulkImportResponse(
+            total_rows=len(payload.rows), valid_count=len(valid_rows), invalid_count=len(errors),
+            errors=errors[: starlink_service.MAX_REPORTED_BULK_IMPORT_ERRORS], committed=False,
+        )
+
+    kits = starlink_service.bulk_register_kits(
+        db, current_location_id=payload.current_location_id, funding_source_id=payload.funding_source_id,
+        rows=valid_rows, performed_by_id=current_user.id,
+    )
+
+    category = starlink_service.get_starlink_category(db)
+    audit_service.record(
+        db, user_id=current_user.id, action="bulk_import", entity_type="asset_category", entity_id=str(category.id),
+        new_value={
+            "created_count": len(kits),
+            "first_asset_tag": kits[0].asset.asset_tag if kits else None,
+            "last_asset_tag": kits[-1].asset.asset_tag if kits else None,
+        },
+        reason=f"{len(errors)} row(s) skipped — see bulk import report.",
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+
+    db.commit()
+    return StarlinkBulkImportResponse(
+        total_rows=len(payload.rows), valid_count=len(valid_rows), invalid_count=len(errors),
+        errors=errors[: starlink_service.MAX_REPORTED_BULK_IMPORT_ERRORS], committed=True, created_count=len(kits),
+        first_asset_tag=kits[0].asset.asset_tag if kits else None,
+        last_asset_tag=kits[-1].asset.asset_tag if kits else None,
+    )
 
 
 # NOTE: every bare-literal-segment route under this prefix (like /faults

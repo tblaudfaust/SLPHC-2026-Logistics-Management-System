@@ -510,6 +510,31 @@ export interface StarlinkKit {
   components: StarlinkComponent[];
 }
 
+export interface StarlinkBulkImportRow {
+  row_number: number;
+  kit_type: StarlinkKitType;
+  serial_number: string | null;
+  terminal_id: string | null;
+  router_serial_number: string | null;
+}
+
+export interface StarlinkBulkImportRowError {
+  row_number: number;
+  serial_number: string | null;
+  reason: string;
+}
+
+export interface StarlinkBulkImportResponse {
+  total_rows: number;
+  valid_count: number;
+  invalid_count: number;
+  errors: StarlinkBulkImportRowError[];
+  committed: boolean;
+  created_count: number | null;
+  first_asset_tag: string | null;
+  last_asset_tag: string | null;
+}
+
 export interface StarlinkInstallation {
   id: string;
   kit_id: string;

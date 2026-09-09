@@ -105,6 +105,11 @@ function RegisterTab() {
   });
 
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
+  // Starlink kits are managed through their own module (Starlink
+  // Management), which has its own dedicated inventory list — they stay
+  // registerable here (a kit is still, physically, a serialized Asset row)
+  // but don't need a second "browse by category" filter duplicating that.
+  const filterableCategories = (categoriesQuery.data ?? []).filter((c) => c.code_prefix !== "STR");
 
   const registerAsset = useMutation({
     mutationFn: (values: RegisterAssetValues) =>
@@ -144,7 +149,7 @@ function RegisterTab() {
           className="max-w-xs"
         >
           <option value="">All categories</option>
-          {categoriesQuery.data?.map((c) => (
+          {filterableCategories.map((c) => (
             <option key={c.id} value={c.id}>
               {categoryLabel(c)}
             </option>

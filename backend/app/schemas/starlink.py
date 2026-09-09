@@ -176,6 +176,44 @@ class StarlinkKitRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ---- Bulk import (mirrors the generic Asset bulk-import's preview/commit
+# shape — brief §19.1 "show rows uploaded ... before committing" — but each
+# row also needs its own kit_type, since one shipment can mix Fixed and
+# Roaming kits, and creates a paired Asset + StarlinkKit row rather than
+# just an Asset.) ----
+
+class StarlinkBulkImportRow(BaseModel):
+    row_number: int
+    kit_type: str = Field(description="FIXED or ROAMING")
+    serial_number: str | None = None
+    terminal_id: str | None = None
+    router_serial_number: str | None = None
+
+
+class StarlinkBulkImportRequest(BaseModel):
+    current_location_id: uuid.UUID | None = None
+    funding_source_id: uuid.UUID | None = None
+    commit: bool = False
+    rows: list[StarlinkBulkImportRow] = Field(min_length=1, max_length=5000)
+
+
+class StarlinkBulkImportRowError(BaseModel):
+    row_number: int
+    serial_number: str | None
+    reason: str
+
+
+class StarlinkBulkImportResponse(BaseModel):
+    total_rows: int
+    valid_count: int
+    invalid_count: int
+    errors: list[StarlinkBulkImportRowError]
+    committed: bool
+    created_count: int | None = None
+    first_asset_tag: str | None = None
+    last_asset_tag: str | None = None
+
+
 # ---- Installations ----
 
 class StarlinkInstallationCreate(BaseModel):
