@@ -888,6 +888,39 @@ asset's `/journey` log shows the full `registered` →
 renders the completed transfer with both asset tags, route, and
 released/received-by names.
 
+## Verified working (2026-09-09) — interactive Starlink Management Dashboard
+
+The Starlink Dashboard tab was a wall of static numbers with nowhere to
+go from them. Every KPI card now jumps to the Inventory tab pre-filtered
+to exactly what it counts:
+
+- `GET /starlink` gained new filter params — `installation_status`,
+  `asset_status`, `has_team_assignment`, `in_hard_to_reach_area`,
+  `overdue_for_return`, `expiring_within_days` — and
+  `operational_status`/`subscription_status` now accept a comma-separated
+  list (e.g. "Deployed" spans four statuses). Each filter is written to
+  match `starlink_service.dashboard_summary`'s own definition of that
+  KPI exactly, so the number and the drill-down never disagree.
+- The Inventory tab shows a clearable "Filtered: <label>" chip when
+  arriving from a KPI click (replacing the normal kit-type dropdown
+  while active), and gains two extra columns — Field Team, Hard-to-Reach
+  Area — only when a field-operations filter is active, since the base
+  table doesn't otherwise surface that context.
+- The "no field team assigned" alert banner is now a button that jumps
+  straight to the Hard-to-Reach Areas tab instead of just naming it in
+  plain text.
+- "Support requested" is left as a plain, non-clickable card — it's
+  computed from check-in records, which have no list view in this app to
+  send someone to.
+
+Verified live: clicking "Available" jumped to Inventory with the exact 2
+matching kits shown (`asset_status=AVAILABLE&operational_status=NOT_DEPLOYED`);
+"Clear filter" correctly returned the tab to its normal, unfiltered
+kit-type dropdown; clicking "Awaiting installation" correctly filtered
+to `installation_status=NOT_INSTALLED`. Also spot-checked the new
+`operational_status` CSV support and `expiring_within_days` directly
+against the API.
+
 ## Local (non-Docker) frontend dev
 
 ```bash
