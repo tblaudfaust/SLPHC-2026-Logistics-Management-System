@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Plus, Radio, Wrench } from "lucide-react";
+import { AlertTriangle, ChevronRight, Plus, Radio, Wrench, X } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
@@ -69,9 +69,33 @@ const SUBSCRIPTION_STATUS_VARIANT: Record<string, "success" | "warning" | "destr
   CANCELLED: "neutral",
 };
 
+/** What the Dashboard's KPI cards jump to on the Inventory tab — every
+ * field maps 1:1 to a GET /starlink query param (see list_kits in
+ * backend/app/api/v1/starlink.py), so a click resolves to the exact same
+ * definition the dashboard number itself was computed from. `label` is
+ * shown back to the user as the active-filter chip. */
+interface KitFilter {
+  label: string;
+  kit_type?: string;
+  operational_status?: string;
+  subscription_status?: string;
+  installation_status?: string;
+  asset_status?: string;
+  has_team_assignment?: boolean;
+  in_hard_to_reach_area?: boolean;
+  overdue_for_return?: boolean;
+  expiring_within_days?: number;
+}
+
 export function StarlinkPage() {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [presetFilter, setPresetFilter] = useState<KitFilter | null>(null);
   const hasPermission = useAuthStore((s) => s.hasPermission);
+
+  function goToInventory(filter: KitFilter) {
+    setPresetFilter(filter);
+    setTab("inventory");
+  }
 
   return (
     <div className="space-y-6">
@@ -101,8 +125,16 @@ export function StarlinkPage() {
         ))}
       </div>
 
-      {tab === "dashboard" && <DashboardTab />}
-      {tab === "inventory" && <InventoryTab canManage={hasPermission("starlink.manage")} />}
+      {tab === "dashboard" && (
+        <DashboardTab onNavigate={goToInventory} onGoToHardToReach={() => setTab("hard-to-reach")} />
+      )}
+      {tab === "inventory" && (
+        <InventoryTab
+          canManage={hasPermission("starlink.manage")}
+          presetFilter={presetFilter}
+          onClearPreset={() => setPresetFilter(null)}
+        />
+      )}
       {tab === "field-teams" && <FieldTeamsTab canManage={hasPermission("starlink.manage")} />}
       {tab === "hard-to-reach" && <HardToReachTab canManage={hasPermission("starlink.manage")} />}
       {tab === "faults" && <FaultsTab canManage={hasPermission("starlink.maintenance")} />}
@@ -110,23 +142,39 @@ export function StarlinkPage() {
   );
 }
 
-function Kpi({ label, value, tone }: { label: string; value: number; tone?: "warn" | "danger" | "good" }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p
-        className={cn(
-          "text-2xl font-semibold",
-          tone === "danger" ? "text-red-600" : tone === "warn" ? "text-amber-600" : tone === "good" ? "text-emerald-600" : "text-slate-900",
-        )}
-      >
-        {value}
-      </p>
+function Kpi({
+  label, value, tone, onClick,
+}: { label: string; value: number; tone?: "warn" | "danger" | "good"; onClick?: () => void }) {
+  const toneClass =
+    tone === "danger" ? "text-red-600" : tone === "warn" ? "text-amber-600" : tone === "good" ? "text-emerald-600" : "text-slate-900";
+  const content = (
+    <>
+      <div className="flex items-center justify-between">
+        <p className={cn("text-2xl font-semibold", toneClass)}>{value}</p>
+        {onClick && <ChevronRight size={16} className="text-slate-300" />}
+      </div>
       <p className="mt-1 text-xs text-slate-500">{label}</p>
-    </div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="rounded-lg border border-slate-200 bg-white p-4">{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg border border-slate-200 bg-white p-4 text-left transition-colors hover:border-brand-300 hover:bg-brand-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+    >
+      {content}
+    </button>
   );
 }
 
-function DashboardTab() {
+function DashboardTab({
+  onNavigate, onGoToHardToReach,
+}: { onNavigate: (filter: KitFilter) => void; onGoToHardToReach: () => void }) {
   const q = useQuery({
     queryKey: ["starlink-dashboard"],
     queryFn: () => api.get<StarlinkDashboardSummary>("/starlink/dashboard"),
@@ -145,67 +193,203 @@ function DashboardTab() {
   return (
     <div className="space-y-6">
       {d.hard_to_reach_gap > 0 && (
-        <div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <button
+          type="button"
+          onClick={onGoToHardToReach}
+          className="flex w-full items-start gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-left text-sm text-red-800 hover:bg-red-100"
+        >
           <AlertTriangle size={18} className="mt-0.5 flex-none" />
           <div>
             <strong>{d.hard_to_reach_gap}</strong> Starlink-required area
             {d.hard_to_reach_gap === 1 ? " has" : "s have"} no field team currently assigned a Starlink
-            kit. See Hard-to-Reach Areas.
+            kit. <span className="underline">See Hard-to-Reach Areas.</span>
           </div>
-        </div>
+        </button>
       )}
 
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Inventory</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi label="Total kits" value={d.total_kits} />
-          <Kpi label="Fixed" value={d.fixed_kits} />
-          <Kpi label="Roaming" value={d.roaming_kits} />
-          <Kpi label="Available" value={d.available_kits} tone="good" />
-          <Kpi label="Deployed" value={d.deployed_kits} />
-          <Kpi label="Under maintenance" value={d.under_maintenance_kits} tone="warn" />
-          <Kpi label="Damaged / lost" value={d.damaged_or_lost_kits} tone="danger" />
+          <Kpi label="Total kits" value={d.total_kits} onClick={() => onNavigate({ label: "All kits" })} />
+          <Kpi
+            label="Fixed"
+            value={d.fixed_kits}
+            onClick={() => onNavigate({ label: "Fixed kits", kit_type: "FIXED" })}
+          />
+          <Kpi
+            label="Roaming"
+            value={d.roaming_kits}
+            onClick={() => onNavigate({ label: "Roaming kits", kit_type: "ROAMING" })}
+          />
+          <Kpi
+            label="Available"
+            value={d.available_kits}
+            tone="good"
+            onClick={() =>
+              onNavigate({ label: "Available kits", operational_status: "NOT_DEPLOYED", asset_status: "AVAILABLE" })
+            }
+          />
+          <Kpi
+            label="Deployed"
+            value={d.deployed_kits}
+            onClick={() =>
+              onNavigate({
+                label: "Deployed kits",
+                operational_status: "FIELD_OPERATIONAL,FIELD_OFFLINE,INSTALLED_OPERATIONAL,INSTALLED_OFFLINE",
+              })
+            }
+          />
+          <Kpi
+            label="Under maintenance"
+            value={d.under_maintenance_kits}
+            tone="warn"
+            onClick={() => onNavigate({ label: "Under maintenance", operational_status: "UNDER_MAINTENANCE" })}
+          />
+          <Kpi
+            label="Damaged / lost"
+            value={d.damaged_or_lost_kits}
+            tone="danger"
+            onClick={() => onNavigate({ label: "Damaged / lost", asset_status: "DAMAGED,LOST" })}
+          />
         </div>
       </div>
 
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Installation</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi label="Installed" value={d.installed} />
-          <Kpi label="Awaiting installation" value={d.awaiting_installation} tone="warn" />
-          <Kpi label="Installed & operational" value={d.installed_and_operational} tone="good" />
-          <Kpi label="Installed but offline" value={d.installed_but_offline} tone="danger" />
+          <Kpi
+            label="Installed"
+            value={d.installed}
+            onClick={() => onNavigate({ label: "Installed", installation_status: "INSTALLED,TESTED,OPERATIONAL" })}
+          />
+          <Kpi
+            label="Awaiting installation"
+            value={d.awaiting_installation}
+            tone="warn"
+            onClick={() => onNavigate({ label: "Awaiting installation", installation_status: "NOT_INSTALLED" })}
+          />
+          <Kpi
+            label="Installed & operational"
+            value={d.installed_and_operational}
+            tone="good"
+            onClick={() => onNavigate({ label: "Installed & operational", operational_status: "INSTALLED_OPERATIONAL" })}
+          />
+          <Kpi
+            label="Installed but offline"
+            value={d.installed_but_offline}
+            tone="danger"
+            onClick={() => onNavigate({ label: "Installed but offline", operational_status: "INSTALLED_OFFLINE" })}
+          />
         </div>
       </div>
 
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Subscription</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi label="Active" value={d.subscriptions_active} tone="good" />
-          <Kpi label="Expiring in 30 days" value={d.subscriptions_expiring_30d} tone="warn" />
-          <Kpi label="Expiring in 14 days" value={d.subscriptions_expiring_14d} tone="warn" />
-          <Kpi label="Expiring in 7 days" value={d.subscriptions_expiring_7d} tone="danger" />
-          <Kpi label="Expired" value={d.subscriptions_expired} tone="danger" />
-          <Kpi label="Payments overdue" value={d.payments_overdue} tone="danger" />
+          <Kpi
+            label="Active"
+            value={d.subscriptions_active}
+            tone="good"
+            onClick={() => onNavigate({ label: "Active subscriptions", subscription_status: "ACTIVE" })}
+          />
+          <Kpi
+            label="Expiring in 30 days"
+            value={d.subscriptions_expiring_30d}
+            tone="warn"
+            onClick={() => onNavigate({ label: "Expiring in 30 days", expiring_within_days: 30 })}
+          />
+          <Kpi
+            label="Expiring in 14 days"
+            value={d.subscriptions_expiring_14d}
+            tone="warn"
+            onClick={() => onNavigate({ label: "Expiring in 14 days", expiring_within_days: 14 })}
+          />
+          <Kpi
+            label="Expiring in 7 days"
+            value={d.subscriptions_expiring_7d}
+            tone="danger"
+            onClick={() => onNavigate({ label: "Expiring in 7 days", expiring_within_days: 7 })}
+          />
+          <Kpi
+            label="Expired"
+            value={d.subscriptions_expired}
+            tone="danger"
+            onClick={() => onNavigate({ label: "Expired subscriptions", subscription_status: "EXPIRED" })}
+          />
+          <Kpi
+            label="Payments overdue"
+            value={d.payments_overdue}
+            tone="danger"
+            onClick={() => onNavigate({ label: "Payments overdue", subscription_status: "PAYMENT_OVERDUE" })}
+          />
         </div>
       </div>
 
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Field operations</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi label="Roaming kits with teams" value={d.roaming_assigned_to_teams} />
-          <Kpi label="Teams in hard-to-reach areas" value={d.teams_in_hard_to_reach_areas} />
-          <Kpi label="...with connectivity" value={d.hard_to_reach_with_connectivity} tone="good" />
-          <Kpi label="...without connectivity" value={d.hard_to_reach_without_connectivity} tone="danger" />
-          <Kpi label="Overdue for return" value={d.kits_overdue_for_return} tone="warn" />
+          <Kpi
+            label="Roaming kits with teams"
+            value={d.roaming_assigned_to_teams}
+            onClick={() => onNavigate({ label: "Roaming kits with teams", has_team_assignment: true })}
+          />
+          <Kpi
+            label="Teams in hard-to-reach areas"
+            value={d.teams_in_hard_to_reach_areas}
+            onClick={() => onNavigate({ label: "Deployed in hard-to-reach areas", in_hard_to_reach_area: true })}
+          />
+          <Kpi
+            label="...with connectivity"
+            value={d.hard_to_reach_with_connectivity}
+            tone="good"
+            onClick={() =>
+              onNavigate({
+                label: "Hard-to-reach, with connectivity",
+                in_hard_to_reach_area: true,
+                operational_status: "FIELD_OPERATIONAL",
+              })
+            }
+          />
+          <Kpi
+            label="...without connectivity"
+            value={d.hard_to_reach_without_connectivity}
+            tone="danger"
+            onClick={() =>
+              onNavigate({
+                label: "Hard-to-reach, without connectivity",
+                in_hard_to_reach_area: true,
+                operational_status: "FIELD_OFFLINE",
+              })
+            }
+          />
+          <Kpi
+            label="Overdue for return"
+            value={d.kits_overdue_for_return}
+            tone="warn"
+            onClick={() => onNavigate({ label: "Overdue for return", overdue_for_return: true })}
+          />
         </div>
       </div>
 
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Connectivity</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi label="Online" value={d.online_kits} tone="good" />
-          <Kpi label="Offline" value={d.offline_kits} tone="danger" />
+          <Kpi
+            label="Online"
+            value={d.online_kits}
+            tone="good"
+            onClick={() =>
+              onNavigate({ label: "Online kits", operational_status: "FIELD_OPERATIONAL,INSTALLED_OPERATIONAL" })
+            }
+          />
+          <Kpi
+            label="Offline"
+            value={d.offline_kits}
+            tone="danger"
+            onClick={() =>
+              onNavigate({ label: "Offline kits", operational_status: "FIELD_OFFLINE,INSTALLED_OFFLINE" })
+            }
+          />
           <Kpi label="Support requested" value={d.support_requested} tone="warn" />
         </div>
       </div>
@@ -231,21 +415,52 @@ const kitSchema = z.object({
 });
 type KitValues = z.infer<typeof kitSchema>;
 
-function InventoryTab({ canManage }: { canManage: boolean }) {
+function InventoryTab({
+  canManage, presetFilter, onClearPreset,
+}: { canManage: boolean; presetFilter: KitFilter | null; onClearPreset: () => void }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [kitTypeFilter, setKitTypeFilter] = useState("");
   const queryClient = useQueryClient();
 
   const kitsQuery = useQuery({
-    queryKey: ["starlink-kits", kitTypeFilter],
+    queryKey: ["starlink-kits", presetFilter, kitTypeFilter],
     queryFn: () =>
-      api.get<Page<StarlinkKit>>("/starlink", { kit_type: kitTypeFilter || undefined, page_size: 50 }),
+      api.get<Page<StarlinkKit>>("/starlink", {
+        ...(presetFilter
+          ? {
+              kit_type: presetFilter.kit_type,
+              operational_status: presetFilter.operational_status,
+              subscription_status: presetFilter.subscription_status,
+              installation_status: presetFilter.installation_status,
+              asset_status: presetFilter.asset_status,
+              has_team_assignment: presetFilter.has_team_assignment,
+              in_hard_to_reach_area: presetFilter.in_hard_to_reach_area,
+              overdue_for_return: presetFilter.overdue_for_return,
+              expiring_within_days: presetFilter.expiring_within_days,
+            }
+          : { kit_type: kitTypeFilter || undefined }),
+        page_size: 50,
+      }),
   });
   const locationsQuery = useQuery({
     queryKey: ["locations-for-select"],
     queryFn: () => api.get<Page<LocationRecord>>("/locations", { page_size: 100 }),
   });
   const locationsById = new Map((locationsQuery.data?.items ?? []).map((l) => [l.id, l]));
+
+  const showFieldOpsColumns = !!(presetFilter?.has_team_assignment || presetFilter?.in_hard_to_reach_area);
+  const fieldTeamsQuery = useQuery({
+    queryKey: ["field-teams"],
+    queryFn: () => api.get<FieldTeam[]>("/starlink/field-teams"),
+    enabled: showFieldOpsColumns,
+  });
+  const areasQuery = useQuery({
+    queryKey: ["hard-to-reach-areas"],
+    queryFn: () => api.get<HardToReachArea[]>("/starlink/hard-to-reach-areas"),
+    enabled: showFieldOpsColumns,
+  });
+  const fieldTeamsById = new Map((fieldTeamsQuery.data ?? []).map((t) => [t.id, t]));
+  const areasById = new Map((areasQuery.data ?? []).map((a) => [a.id, a]));
 
   const {
     register,
@@ -275,11 +490,27 @@ function InventoryTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Select value={kitTypeFilter} onChange={(e) => setKitTypeFilter(e.target.value)} className="max-w-xs">
-          <option value="">All kit types</option>
-          <option value="FIXED">Fixed</option>
-          <option value="ROAMING">Roaming</option>
-        </Select>
+        {presetFilter ? (
+          <div className="flex items-center gap-2 rounded-full bg-brand-50 py-1.5 pl-3 pr-2 text-sm text-brand-800">
+            <span>
+              Filtered: <strong>{presetFilter.label}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={onClearPreset}
+              aria-label="Clear filter"
+              className="rounded-full p-0.5 text-brand-600 hover:bg-brand-100 hover:text-brand-800"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <Select value={kitTypeFilter} onChange={(e) => setKitTypeFilter(e.target.value)} className="max-w-xs">
+            <option value="">All kit types</option>
+            <option value="FIXED">Fixed</option>
+            <option value="ROAMING">Roaming</option>
+          </Select>
+        )}
         {canManage && (
           <Button onClick={() => setDialogOpen(true)}>
             <Plus size={16} /> Register Starlink kit
@@ -303,6 +534,12 @@ function InventoryTab({ canManage }: { canManage: boolean }) {
               <TableHeaderCell>Operational Status</TableHeaderCell>
               <TableHeaderCell>Subscription</TableHeaderCell>
               <TableHeaderCell>Connectivity</TableHeaderCell>
+              {showFieldOpsColumns && (
+                <>
+                  <TableHeaderCell>Field Team</TableHeaderCell>
+                  <TableHeaderCell>Hard-to-Reach Area</TableHeaderCell>
+                </>
+              )}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -330,12 +567,24 @@ function InventoryTab({ canManage }: { canManage: boolean }) {
                   </Badge>
                 </TableCell>
                 <TableCell>{kit.last_connectivity_quality ?? "-"}</TableCell>
+                {showFieldOpsColumns && (
+                  <>
+                    <TableCell>
+                      {kit.current_field_team_id ? fieldTeamsById.get(kit.current_field_team_id)?.name ?? "-" : "-"}
+                    </TableCell>
+                    <TableCell>
+                      {kit.current_hard_to_reach_area_id
+                        ? areasById.get(kit.current_hard_to_reach_area_id)?.name ?? "-"
+                        : "-"}
+                    </TableCell>
+                  </>
+                )}
               </TableRow>
             ))}
             {kitsQuery.data.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-slate-400">
-                  No Starlink kits registered yet.
+                <TableCell colSpan={showFieldOpsColumns ? 8 : 6} className="py-8 text-center text-slate-400">
+                  No Starlink kits match this filter.
                 </TableCell>
               </TableRow>
             )}

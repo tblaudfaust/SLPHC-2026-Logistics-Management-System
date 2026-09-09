@@ -1,10 +1,12 @@
 import uuid
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_permission
+from app.models.asset import Asset
 from app.models.location import District
 from app.models.starlink import (
     FieldTeam,
@@ -210,19 +212,60 @@ def list_kits(
     kit_type: str | None = None,
     operational_status: str | None = None,
     subscription_status: str | None = None,
+    installation_status: str | None = None,
+    asset_status: str | None = None,
+    has_team_assignment: bool | None = None,
+    in_hard_to_reach_area: bool | None = None,
+    overdue_for_return: bool | None = None,
+    expiring_within_days: int | None = None,
     db: Session = Depends(get_db),
     _=Depends(require_permission("starlink.view")),
 ):
+    """Every filter here (plus the dashboard's own definitions in
+    starlink_service.dashboard_summary) is what lets the Dashboard tab's KPI
+    cards jump straight to the matching, pre-filtered slice of this same
+    list instead of just being static numbers — "operational_status",
+    "subscription_status" etc. accept a comma-separated list so a KPI like
+    "Deployed" (four statuses) can still resolve to one exact query."""
     stmt = select(StarlinkKit).join(StarlinkKit.asset)
     if kit_type:
         stmt = stmt.where(StarlinkKit.kit_type == kit_type)
     if operational_status:
-        stmt = stmt.where(StarlinkKit.operational_status == operational_status)
+        stmt = stmt.where(StarlinkKit.operational_status.in_(operational_status.split(",")))
     if subscription_status:
-        stmt = stmt.where(StarlinkKit.subscription_status == subscription_status)
+        stmt = stmt.where(StarlinkKit.subscription_status.in_(subscription_status.split(",")))
+    if installation_status:
+        stmt = stmt.where(StarlinkKit.installation_status.in_(installation_status.split(",")))
+    if asset_status:
+        stmt = stmt.where(Asset.status.in_(asset_status.split(",")))
+    if has_team_assignment is not None:
+        stmt = stmt.where(
+            StarlinkKit.current_field_team_id.is_not(None)
+            if has_team_assignment
+            else StarlinkKit.current_field_team_id.is_(None)
+        )
+    if in_hard_to_reach_area is not None:
+        stmt = stmt.where(
+            StarlinkKit.current_hard_to_reach_area_id.is_not(None)
+            if in_hard_to_reach_area
+            else StarlinkKit.current_hard_to_reach_area_id.is_(None)
+        )
+    if overdue_for_return:
+        overdue_kit_ids = select(StarlinkTeamAssignment.kit_id).where(
+            StarlinkTeamAssignment.status == "ACTIVE",
+            StarlinkTeamAssignment.expected_return_date < date.today(),
+        )
+        stmt = stmt.where(StarlinkKit.id.in_(overdue_kit_ids))
+    if expiring_within_days is not None:
+        today = date.today()
+        expiring_kit_ids = select(StarlinkSubscription.kit_id).where(
+            StarlinkSubscription.is_current.is_(True),
+            StarlinkSubscription.expiry_date.is_not(None),
+            StarlinkSubscription.expiry_date >= today,
+            StarlinkSubscription.expiry_date <= today + timedelta(days=expiring_within_days),
+        )
+        stmt = stmt.where(StarlinkKit.id.in_(expiring_kit_ids))
     if params.search:
-        from app.models.asset import Asset
-
         like = f"%{params.search}%"
         stmt = stmt.where((Asset.asset_tag.ilike(like)) | (Asset.serial_number.ilike(like)) | (StarlinkKit.terminal_id.ilike(like)))
     return paginate(db, stmt, StarlinkKit, params, StarlinkKitRead)
