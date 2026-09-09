@@ -921,6 +921,38 @@ to `installation_status=NOT_INSTALLED`. Also spot-checked the new
 `operational_status` CSV support and `expiring_within_days` directly
 against the API.
 
+## Verified working (2026-09-09) — Starlink Kits excluded from the Asset Register category filter, Starlink bulk import
+
+**Asset Register:** Starlink kits are managed through their own module
+with its own dedicated inventory list, so browsing the Asset Register
+"by category" no longer needs to offer them — the "All categories"
+filter dropdown excludes "Starlink Kits (STR)". Kits still show up in
+search and can still be registered through that page's own "Register
+asset" dialog (its category list is untouched) — only the one
+browse-by-category filter is scoped down.
+
+**Starlink Management:** kits could previously only be registered one
+at a time. Added `POST /starlink/bulk-import`, a preview/commit flow
+matching the existing Asset bulk-import UX, adapted for a Starlink kit
+being a paired Asset + StarlinkKit row rather than just an Asset — and
+for a shipment mixing Fixed and Roaming kits, so `kit_type` is read per
+row (via `parseStarlinkWorkbook.ts`) rather than picked once for the
+whole file the way category is for assets.
+`starlink_service.validate_bulk_kit_rows`/`bulk_register_kits` mirror
+`asset_service`'s bulk-import helpers — same duplicate-serial/
+duplicate-terminal-ID checks (within the file and against existing
+kits), same locked category-sequence reservation for asset tags. A
+"Bulk import" button sits next to "Register Starlink kit" on the
+Starlink Inventory tab.
+
+Verified live end-to-end: previewed 3 rows (2 valid, 1 with an invalid
+kit_type — correctly rejected with "kit_type must be FIXED or
+ROAMING"), committed the 2 valid rows and got back
+`SLPHC26-STR-000023`/`000024` with the right kit_type/terminal_id each,
+confirmed re-importing the same serial numbers is rejected as already
+registered, and confirmed both kits render correctly in the Starlink
+Inventory table and count toward the Dashboard's Total kits (2 → 4).
+
 ## Local (non-Docker) frontend dev
 
 ```bash
