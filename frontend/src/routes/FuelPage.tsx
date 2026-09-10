@@ -167,7 +167,7 @@ function DashboardTab() {
           <Kpi label="Received" value={d.total_received_litres.toLocaleString()} />
           <Kpi label="Consumed" value={d.total_consumed_litres.toLocaleString()} />
           <Kpi label="Remaining Balance" value={d.remaining_balance_litres.toLocaleString()} tone="good" />
-          <Kpi label="Total Expenditure" value={`$${d.total_expenditure.toLocaleString()}`} />
+          <Kpi label="Total Expenditure" value={`SLE ${d.total_expenditure.toLocaleString()}`} />
         </div>
       </div>
 
@@ -710,7 +710,7 @@ function IssueForm({ request, onDone }: { request: FuelRequest; onDone: () => vo
           <Input id="quantity_issued" type="number" step="0.01" {...register("quantity_issued")} />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="price_per_litre">Price per litre</Label>
+          <Label htmlFor="price_per_litre">Price per litre (SLE)</Label>
           <Input id="price_per_litre" type="number" step="0.01" {...register("price_per_litre")} />
         </div>
       </div>
@@ -1273,7 +1273,7 @@ function AllocationsTab({ canManage }: { canManage: boolean }) {
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="allocated_budget">Budget (optional)</Label>
+            <Label htmlFor="allocated_budget">Budget (SLE, optional)</Label>
             <Input id="allocated_budget" type="number" step="0.01" {...register("allocated_budget")} />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -1358,7 +1358,7 @@ function VouchersTab({ canManage }: { canManage: boolean }) {
           <TableHead>
             <TableRow>
               <TableHeaderCell>Voucher #</TableHeaderCell>
-              <TableHeaderCell>Value</TableHeaderCell>
+              <TableHeaderCell>Value (SLE)</TableHeaderCell>
               <TableHeaderCell>Litres</TableHeaderCell>
               <TableHeaderCell>Assigned Asset</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
@@ -1401,7 +1401,7 @@ function VouchersTab({ canManage }: { canManage: boolean }) {
             <Input id="voucher_number" {...register("voucher_number")} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5"><Label htmlFor="value">Value</Label><Input id="value" type="number" step="0.01" {...register("value")} /></div>
+            <div className="space-y-1.5"><Label htmlFor="value">Value (SLE)</Label><Input id="value" type="number" step="0.01" {...register("value")} /></div>
             <div className="space-y-1.5"><Label htmlFor="litres">Litres</Label><Input id="litres" type="number" step="0.01" {...register("litres")} /></div>
           </div>
           <div className="space-y-1.5">

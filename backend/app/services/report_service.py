@@ -477,7 +477,7 @@ def _report_fuel_allocation(db: Session, f: dict) -> ReportResult:
     ]
     columns = [
         ("reference", "Reference"), ("region", "Region"), ("district", "District"), ("activity", "Activity"),
-        ("fuel_type", "Fuel Type"), ("allocated_litres", "Allocated (L)"), ("allocated_budget", "Budget"),
+        ("fuel_type", "Fuel Type"), ("allocated_litres", "Allocated (L)"), ("allocated_budget", "Budget (SLE)"),
         ("start_date", "Start"), ("end_date", "End"), ("status", "Status"),
     ]
     return ReportResult("fuel_allocation", "Fuel Allocation Report", columns, rows, truncated)
@@ -539,7 +539,7 @@ def _report_fuel_issuance(db: Session, f: dict) -> ReportResult:
     columns = [
         ("reference", "Issue Reference"), ("request_reference", "Request Reference"),
         ("quantity_approved", "Approved (L)"), ("quantity_issued", "Issued (L)"),
-        ("price_per_litre", "Price/Litre"), ("total_cost", "Total Cost"), ("issued_by", "Issued By"),
+        ("price_per_litre", "Price/Litre (SLE)"), ("total_cost", "Total Cost (SLE)"), ("issued_by", "Issued By"),
         ("issue_date", "Issue Date"),
     ]
     return ReportResult("fuel_issuance", "Fuel Issuance Report", columns, rows, truncated)
