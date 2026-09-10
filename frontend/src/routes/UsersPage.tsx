@@ -41,6 +41,7 @@ import type {
   PasswordResetResult,
   Region,
   Role,
+  UserCreateResult,
   UserDeleteResult,
   UserRecord,
   WarehouseAccess,
@@ -48,7 +49,6 @@ import type {
 
 const createUserSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8, "At least 8 characters"),
   first_name: z.string().min(1, "Required"),
   last_name: z.string().min(1, "Required"),
   phone: z.string().optional(),
@@ -102,16 +102,20 @@ export function UsersPage() {
 
   const createUser = useMutation({
     mutationFn: (values: CreateUserValues) =>
-      api.post<UserRecord>("/users", {
+      api.post<UserCreateResult>("/users", {
         ...values,
         region_id: values.region_id || undefined,
         district_id: values.district_id || undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      setDialogOpen(false);
     },
   });
+
+  function closeCreateDialog() {
+    setDialogOpen(false);
+    createUser.reset();
+  }
 
   const toggleActive = useMutation({
     mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
@@ -252,15 +256,36 @@ export function UsersPage() {
         </Table>
       )}
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Create user">
-        <CreateUserForm
-          roles={rolesQuery.data ?? []}
-          regions={regionsQuery.data ?? []}
-          districts={districtsQuery.data ?? []}
-          submitting={createUser.isPending}
-          serverError={createUser.error instanceof ApiError ? createUser.error.message : null}
-          onSubmit={(values) => createUser.mutate(values)}
-        />
+      <Dialog open={dialogOpen} onClose={closeCreateDialog} title="Create user">
+        {!createUser.data ? (
+          <CreateUserForm
+            roles={rolesQuery.data ?? []}
+            regions={regionsQuery.data ?? []}
+            districts={districtsQuery.data ?? []}
+            submitting={createUser.isPending}
+            serverError={createUser.error instanceof ApiError ? createUser.error.message : null}
+            onSubmit={(values) => createUser.mutate(values)}
+          />
+        ) : (
+          <div>
+            <p className="mb-2 text-sm text-slate-700">{createUser.data.detail}</p>
+            <p className="mb-4 text-xs text-slate-500">
+              This password is shown once and can't be retrieved again — share it with{" "}
+              {createUser.data.user.first_name} directly if needed.
+            </p>
+            <Label>Login email</Label>
+            <div className="mb-4 mt-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm text-slate-900">
+              {createUser.data.user.email}
+            </div>
+            <Label>Temporary password</Label>
+            <div className="mb-4 mt-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm text-slate-900">
+              {createUser.data.temporary_password}
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={closeCreateDialog}>Done</Button>
+            </div>
+          </div>
+        )}
       </Dialog>
 
       {editingUser && (
@@ -796,12 +821,6 @@ function CreateUserForm({
         <Label htmlFor="email">Email</Label>
         <Input id="email" type="email" {...register("email")} />
         {errors.email && <p className="text-xs text-red-600">{errors.email.message}</p>}
-      </div>
-
-      <div className="space-y-1.5">
-        <Label htmlFor="password">Temporary password</Label>
-        <Input id="password" type="password" {...register("password")} />
-        {errors.password && <p className="text-xs text-red-600">{errors.password.message}</p>}
       </div>
 
       <div className="space-y-1.5">

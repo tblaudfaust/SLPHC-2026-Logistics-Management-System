@@ -7,7 +7,6 @@ from pydantic import BaseModel, EmailStr, Field
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8)
     first_name: str
     last_name: str
     phone: str | None = None
@@ -63,6 +62,15 @@ class UserRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class UserCreateResult(BaseModel):
+    """The temporary password is only ever returned here, at creation time —
+    it is never retrievable again afterward, same as PasswordResetResult."""
+
+    user: UserRead
+    temporary_password: str
+    detail: str
 
 
 class EffectivePermission(BaseModel):

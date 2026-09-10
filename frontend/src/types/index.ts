@@ -38,6 +38,12 @@ export interface UserRecord {
   created_at: string;
 }
 
+export interface UserCreateResult {
+  user: UserRecord;
+  temporary_password: string;
+  detail: string;
+}
+
 export interface Permission {
   id: string;
   code: string;

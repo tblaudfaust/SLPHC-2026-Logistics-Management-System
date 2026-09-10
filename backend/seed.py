@@ -268,6 +268,18 @@ NOTIFICATION_TEMPLATES = [
         None,
     ),
     (
+        "user.invite",
+        "Welcome to SLPHC 2026 Logistics — your account is ready",
+        "Hello {first_name},\n\n"
+        "An account has been created for you on the SLPHC 2026 Logistics Management System.\n\n"
+        "Login email: {email}\n"
+        "Temporary password: {temporary_password}\n\n"
+        "Sign in at https://sl-logistics-ops.statistics.sl and change your password immediately "
+        "from Settings.\n\n"
+        "If you were not expecting this account, contact your system administrator.",
+        None,
+    ),
+    (
         "inventory.receipt",
         "Stock received at {warehouse_name}",
         "Goods received at {warehouse_name} from {supplier_name}.\n\n"

@@ -18,6 +18,7 @@ from app.schemas.user import (
     PasswordChange,
     PasswordResetResult,
     UserCreate,
+    UserCreateResult,
     UserDeleteResult,
     UserPermissionOverridesUpdate,
     UserRead,
@@ -47,21 +48,27 @@ def list_users(
     return paginate(db, stmt, User, params, UserRead)
 
 
-@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserCreateResult, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreate,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("users.create")),
 ):
+    """Login invite, not a manual-password flow: the system generates the
+    initial password (same locked-random approach as reset_user_password)
+    rather than asking the creating admin to invent and relay one out of
+    band. It is emailed to the new user and returned once here so the admin
+    can also hand it over directly if needed."""
     if db.scalar(select(User).where(User.email == payload.email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "A user with this email already exists.")
 
     roles = db.scalars(select(Role).where(Role.id.in_(payload.role_ids))).all() if payload.role_ids else []
 
+    temporary_password = secrets.token_urlsafe(9)
     user = User(
         email=payload.email,
-        hashed_password=hash_password(payload.password),
+        hashed_password=hash_password(temporary_password),
         first_name=payload.first_name,
         last_name=payload.last_name,
         phone=payload.phone,
@@ -76,9 +83,26 @@ def create_user(
         new_value={"email": user.email, "roles": [r.name for r in roles]},
         ip_address=client_ip(request), user_agent=client_user_agent(request),
     )
+    notifications = notification_service.notify(
+        db,
+        event_type="user.invite",
+        context={
+            "first_name": user.first_name,
+            "email": user.email,
+            "temporary_password": temporary_password,
+        },
+        recipients=[user],
+        related_entity_type="user",
+        related_entity_id=str(user.id),
+    )
     db.commit()
     db.refresh(user)
-    return user
+    notification_service.dispatch(notifications)
+    return UserCreateResult(
+        user=user,
+        temporary_password=temporary_password,
+        detail=f"User created. Login details were emailed to {user.email}.",
+    )
 
 
 @router.get("/{user_id}", response_model=UserRead)
