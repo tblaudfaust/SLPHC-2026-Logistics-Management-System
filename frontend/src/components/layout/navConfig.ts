@@ -1,6 +1,7 @@
 import {
   Bell,
   Boxes,
+  Fuel,
   FileBarChart,
   LayoutDashboard,
   MapPin,
@@ -28,6 +29,7 @@ export const navItems: NavItem[] = [
   { label: "Inventory", to: "/inventory", icon: PackageSearch, permission: "inventory.view" },
   { label: "Suppliers & Procurement", to: "/procurement", icon: Truck, permission: "suppliers.view" },
   { label: "Starlink Management", to: "/starlink", icon: Satellite, permission: "starlink.view" },
+  { label: "Fuel Management", to: "/fuel", icon: Fuel, permission: "fuel.view" },
   { label: "Notifications", to: "/notifications", icon: Bell, permission: "notifications.view" },
   { label: "Reports", to: "/reports", icon: FileBarChart, permission: "reports.view" },
   { label: "Users", to: "/users", icon: Users, permission: "users.view" },

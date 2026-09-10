@@ -5,6 +5,7 @@ from app.api.v1 import (
     audit,
     auth,
     dashboard,
+    fuel,
     inventory,
     locations,
     notifications,
@@ -32,3 +33,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(audit.router)
 api_router.include_router(reports.router)
 api_router.include_router(starlink.router)
+api_router.include_router(fuel.router)

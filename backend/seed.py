@@ -14,6 +14,7 @@ from app.core.security import hash_password
 from app.db.base import Base  # noqa: F401  (ensures all models are registered)
 from app.db.session import SessionLocal
 from app.models.asset import AssetCategory
+from app.models.fuel import CensusActivity
 from app.models.location import District, Location, LocationType, Region
 from app.models.notification import NotificationTemplate
 from app.models.rbac import Permission, Role
@@ -60,6 +61,19 @@ PERMISSIONS = [
     ("starlink.assign", "starlink", "Assign, return or move Starlink kits to/from field teams"),
     ("starlink.checkin", "starlink", "Submit a field team's daily Starlink check-in"),
     ("starlink.maintenance", "starlink", "Report and resolve Starlink faults"),
+    ("fuel.view", "fuel", "View fuel allocations, requests, issuance, stock and reconciliation"),
+    ("fuel.request", "fuel", "Submit fuel requests"),
+    ("fuel.approve_review", "fuel", "Director-level review of fuel requests (approval level 1)"),
+    (
+        "fuel.approve_final", "fuel",
+        "Final fuel request authorization — Statistician General, or the Deputy Statistician "
+        "General in their absence (approval level 2)",
+    ),
+    ("fuel.issue", "fuel", "Issue approved fuel"),
+    ("fuel.receive", "fuel", "Acknowledge receipt of issued fuel"),
+    ("fuel.reconcile", "fuel", "Reconcile fuel usage against issuance"),
+    ("fuel.manage", "fuel", "Manage vehicles, generators, fuel stations, allocations and vouchers"),
+    ("fuel.export", "fuel", "Export and email fuel reports"),
 ]
 
 # role_name -> permission codes. System Administrator gets everything below.
@@ -115,6 +129,25 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "reports.view", "starlink.view",
     ],
     "Senior Management": ["dashboard.view", "assets.view", "inventory.view", "reports.view", "starlink.view"],
+    # Fuel Management roles — kept distinct from the Logistics-module roles
+    # above (e.g. Regional Logistics Officer) even where responsibilities
+    # sound similar, since these are real, separate job titles at Stats SL.
+    "Statistician General": ["dashboard.view", "fuel.view", "fuel.approve_final", "reports.view", "fuel.export"],
+    "Deputy Statistician General": [
+        "dashboard.view", "fuel.view", "fuel.approve_final", "reports.view", "fuel.export",
+    ],
+    "Directorate Head": ["dashboard.view", "fuel.view", "fuel.approve_review", "reports.view"],
+    "Fuel Manager": [
+        "dashboard.view", "fuel.view", "fuel.manage", "fuel.issue", "fuel.reconcile", "fuel.export",
+        "warehouses.view", "locations.view", "suppliers.view", "reports.view",
+    ],
+    "Finance Officer": ["dashboard.view", "fuel.view", "reports.view", "fuel.export"],
+    "Fuel Issuing Officer": ["dashboard.view", "fuel.view", "fuel.issue"],
+    "Driver": ["dashboard.view", "fuel.view", "fuel.request", "fuel.receive"],
+    "Generator Operator": ["dashboard.view", "fuel.view", "fuel.request", "fuel.receive"],
+    "Regional Coordinator": ["dashboard.view", "fuel.view", "fuel.request", "locations.view", "reports.view"],
+    "District Census Officer": ["dashboard.view", "fuel.view", "fuel.request", "locations.view"],
+    "Monitoring Officer": ["dashboard.view", "fuel.view", "reports.view", "audit.view"],
 }
 
 # Sierra Leone's actual administrative geography (5 regions / 16 districts, post-2017 reform).
@@ -159,6 +192,10 @@ ASSET_CATEGORIES = [
     ("Network Switches / Access Points", "NSW", "serialized"),
     ("External Hard Drives", "HDD", "serialized"),
     ("Other IT Equipment", "OIT", "serialized"),
+    # Fuel Management module — vehicles/motorcycles/generators extend Asset
+    # the same way Starlink Kits do (see backend/app/services/fuel_service.py).
+    ("Vehicles", "VEH", "serialized"),
+    ("Generators", "GEN", "serialized"),
     # §3.2 Other Census Logistics (quantity-based stock movement)
     ("SIM Cards", "SIM", "quantity"),
     ("SD Cards", "SDC", "quantity"),
@@ -180,6 +217,13 @@ ASSET_CATEGORIES = [
     # summary (not part of the original brief §3 census fleet, but the same
     # ledger-driven stock model applies).
     ("Printer Ink & Toner", "INK", "quantity"),
+]
+
+# Census activities a fuel allocation/request can be tied to (brief's
+# example list) — database-driven, same "admins can add more" principle.
+CENSUS_ACTIVITIES = [
+    "Enumeration", "Supervision", "Training", "GIS", "Logistics", "Monitoring",
+    "IT Support", "Publicity", "Starlink Support", "Generator Operation",
 ]
 
 # Email notification templates (brief §12.2 trigger events — the slice wired
@@ -323,6 +367,61 @@ NOTIFICATION_TEMPLATES = [
         "returned or reassigned.",
         "OVERDUE: Starlink {asset_tag} from {team_name}, due {expected_return_date}.",
     ),
+    (
+        "fuel.request_submitted",
+        "Fuel request submitted: {reference}",
+        "{requester} submitted fuel request {reference} for {quantity}L of {fuel_type} "
+        "({purpose}). It now needs Director review.",
+        None,
+    ),
+    (
+        "fuel.request_needs_approval",
+        "Fuel request needs final approval: {reference}",
+        "{reference} ({quantity}L {fuel_type}, requested by {requester}) has been reviewed by "
+        "the Director and now needs final authorization.",
+        "Fuel request {reference} needs your final approval.",
+    ),
+    (
+        "fuel.request_approved",
+        "Fuel request approved: {reference}",
+        "{reference} was approved for {approved_quantity}L of {fuel_type} by {approver}. "
+        "It is ready for issuance.",
+        None,
+    ),
+    (
+        "fuel.request_rejected",
+        "Fuel request rejected: {reference}",
+        "{reference} was rejected by {approver}.\n\nReason: {reason}",
+        None,
+    ),
+    (
+        "fuel.ready_for_issuance",
+        "Fuel ready for issuance: {reference}",
+        "{reference} has been fully approved for {approved_quantity}L of {fuel_type} and is "
+        "ready to be issued.",
+        None,
+    ),
+    (
+        "fuel.receipt_needed",
+        "Confirm fuel receipt: {issue_reference}",
+        "{quantity_issued}L of fuel was issued against {issue_reference}. Please confirm the "
+        "quantity actually received.",
+        "Please confirm receipt of fuel issue {issue_reference} ({quantity_issued}L).",
+    ),
+    (
+        "fuel.reconciliation_overdue",
+        "Fuel reconciliation overdue: {issue_reference}",
+        "Fuel issue {issue_reference} was received on {date_received} and has not yet been "
+        "reconciled with actual usage.",
+        "OVERDUE: Reconcile fuel issue {issue_reference} (received {date_received}).",
+    ),
+    (
+        "fuel.allocation_low",
+        "Fuel allocation running low: {reference}",
+        "{reference} ({fuel_type}) has {remaining}L of {allocated}L remaining "
+        "({percent_remaining}% left).",
+        "Fuel allocation {reference} low: {remaining}L of {allocated}L left.",
+    ),
 ]
 
 
@@ -372,6 +471,10 @@ def run() -> None:
         for name, code_prefix, tracking_type in ASSET_CATEGORIES:
             if not db.query(AssetCategory).filter_by(code_prefix=code_prefix).one_or_none():
                 db.add(AssetCategory(name=name, code_prefix=code_prefix, tracking_type=tracking_type))
+
+        for activity_name in CENSUS_ACTIVITIES:
+            if not db.query(CensusActivity).filter_by(name=activity_name).one_or_none():
+                db.add(CensusActivity(name=activity_name))
 
         for event_type, subject_template, body_template, sms_body_template in NOTIFICATION_TEMPLATES:
             if not db.query(NotificationTemplate).filter_by(event_type=event_type).one_or_none():

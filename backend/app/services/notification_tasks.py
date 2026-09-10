@@ -217,3 +217,74 @@ def check_starlink_alerts() -> None:
             notification_service.dispatch(notifications)
     finally:
         db.close()
+
+
+@celery_app.task(name="notifications.check_fuel_alerts")
+def check_fuel_alerts() -> None:
+    """Runs on Celery Beat's schedule — a starter alert set (the brief's full
+    14-alert catalogue isn't all built yet): fuel issued but not reconciled
+    more than 3 days after receipt, and an allocation down to its last 10%.
+    Each condition is only ever alerted on once (FuelIssue.
+    reconciliation_overdue_notified_at / FuelAllocation.low_balance_notified_at
+    dedupe it), same principle as the tasks above."""
+    from datetime import date, timedelta
+
+    from app.models.fuel import FuelAllocation, FuelIssue, FuelRequest
+    from app.services import fuel_service, notification_service
+
+    db = SessionLocal()
+    try:
+        reconcile_recipients = notification_service.get_users_with_permission(db, "fuel.reconcile")
+        cutoff = date.today() - timedelta(days=3)
+        overdue_issues = (
+            db.query(FuelIssue)
+            .join(FuelRequest, FuelIssue.fuel_request_id == FuelRequest.id)
+            .filter(
+                FuelRequest.status == "RECEIVED",
+                FuelIssue.reconciliation_overdue_notified_at.is_(None),
+            )
+            .all()
+        )
+        for issue in overdue_issues:
+            if not issue.receipt or issue.receipt.date_received > cutoff:
+                continue
+            notifications = notification_service.notify(
+                db, event_type="fuel.reconciliation_overdue",
+                context={
+                    "issue_reference": issue.issue_reference,
+                    "date_received": issue.receipt.date_received.isoformat(),
+                },
+                recipients=reconcile_recipients,
+                related_entity_type="fuel_issue", related_entity_id=str(issue.id),
+            )
+            issue.reconciliation_overdue_notified_at = datetime.now(timezone.utc)
+            db.commit()
+            notification_service.dispatch(notifications)
+
+        manage_recipients = notification_service.get_users_with_permission(db, "fuel.manage")
+        active_allocations = (
+            db.query(FuelAllocation)
+            .filter(FuelAllocation.status == "ACTIVE", FuelAllocation.low_balance_notified_at.is_(None))
+            .all()
+        )
+        for allocation in active_allocations:
+            committed = fuel_service.allocation_committed_litres(db, allocation.id)
+            allocated = float(allocation.allocated_litres)
+            remaining = allocated - committed["requested"]
+            if allocated <= 0 or remaining / allocated > 0.10:
+                continue
+            notifications = notification_service.notify(
+                db, event_type="fuel.allocation_low",
+                context={
+                    "reference": allocation.allocation_reference, "fuel_type": allocation.fuel_type,
+                    "remaining": round(remaining, 2), "allocated": allocated,
+                    "percent_remaining": round((remaining / allocated) * 100, 1),
+                },
+                recipients=manage_recipients,
+                related_entity_type="fuel_allocation", related_entity_id=str(allocation.id),
+            )
+            allocation.low_balance_notified_at = datetime.now(timezone.utc)
+            db.commit()
+            notification_service.dispatch(notifications)
+    finally:
+        db.close()

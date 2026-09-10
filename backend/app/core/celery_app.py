@@ -19,6 +19,10 @@ celery_app.conf.update(
             "task": "notifications.check_starlink_alerts",
             "schedule": 3600.0,
         },
+        "check-fuel-alerts-hourly": {
+            "task": "notifications.check_fuel_alerts",
+            "schedule": 3600.0,
+        },
     },
 )
 

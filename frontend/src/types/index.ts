@@ -669,3 +669,195 @@ export interface StarlinkDashboardSummary {
   offline_kits: number;
   support_requested: number;
 }
+
+// --- Fuel Management -------------------------------------------------
+
+export type FuelType = "PETROL" | "DIESEL";
+export type VehicleType = "CAR" | "PICKUP" | "SUV" | "TRUCK" | "BUS" | "MOTORCYCLE" | "OTHER";
+export type FuelRequestAssetType = "VEHICLE" | "GENERATOR" | "STARLINK" | "OTHER";
+export type FuelRequestStatus =
+  | "DRAFT" | "SUBMITTED" | "UNDER_REVIEW" | "APPROVED" | "REJECTED" | "ISSUED" | "RECEIVED" | "RECONCILED";
+export type FuelVoucherStatus = "AVAILABLE" | "ISSUED" | "REDEEMED" | "CANCELLED" | "LOST" | "RECONCILED";
+export type FuelAllocationStatus = "ACTIVE" | "EXHAUSTED" | "EXPIRED" | "CLOSED";
+
+interface FuelAssetSummary {
+  id: string;
+  asset_tag: string;
+  status: string;
+  current_location_id: string | null;
+}
+
+export interface CensusActivity {
+  id: string;
+  name: string;
+  is_active: boolean;
+}
+
+export interface FuelVehicle {
+  id: string;
+  asset: FuelAssetSummary;
+  registration_number: string;
+  vehicle_type: VehicleType;
+  make: string | null;
+  model: string | null;
+  fuel_type: FuelType;
+  tank_capacity: number | null;
+  assigned_driver_name: string | null;
+  current_odometer: number;
+}
+
+export interface FuelGenerator {
+  id: string;
+  asset: FuelAssetSummary;
+  capacity_kva: number | null;
+  fuel_type: FuelType;
+  current_hour_meter: number;
+}
+
+export interface FuelStation {
+  id: string;
+  supplier_id: string;
+  name: string;
+  location: { id: string; name: string } | null;
+  is_active: boolean;
+}
+
+export interface FuelAllocation {
+  id: string;
+  allocation_reference: string;
+  region: { id: string; name: string } | null;
+  district: { id: string; name: string } | null;
+  activity: CensusActivity | null;
+  fuel_type: FuelType;
+  allocated_litres: number;
+  allocated_budget: number | null;
+  start_date: string;
+  end_date: string;
+  status: FuelAllocationStatus;
+  litres_requested: number;
+  litres_approved: number;
+  litres_issued: number;
+  litres_remaining: number;
+  created_at: string;
+}
+
+export interface FuelApproval {
+  id: string;
+  approver: { id: string; first_name: string; last_name: string; email: string };
+  approval_level: number;
+  requested_quantity: number;
+  approved_quantity: number | null;
+  decision: "APPROVED" | "REJECTED";
+  comments: string | null;
+  approved_at: string;
+}
+
+export interface FuelIssue {
+  id: string;
+  issue_reference: string;
+  fuel_request_id: string;
+  supplier_id: string | null;
+  fuel_station_id: string | null;
+  quantity_approved: number;
+  quantity_issued: number;
+  price_per_litre: number | null;
+  total_cost: number | null;
+  voucher_number: string | null;
+  issued_by: { id: string; first_name: string; last_name: string; email: string };
+  received_by_name: string | null;
+  witness_name: string | null;
+  issue_date: string;
+  odometer_reading: number | null;
+  comments: string | null;
+  created_at: string;
+}
+
+export interface FuelRequest {
+  id: string;
+  request_reference: string;
+  requester: { id: string; first_name: string; last_name: string; email: string };
+  region: { id: string; name: string } | null;
+  district: { id: string; name: string } | null;
+  activity: CensusActivity | null;
+  allocation_id: string | null;
+  asset_type: FuelRequestAssetType;
+  vehicle: FuelVehicle | null;
+  generator: FuelGenerator | null;
+  fuel_type: FuelType;
+  quantity_requested: number;
+  purpose: string | null;
+  destination: string | null;
+  date_required: string | null;
+  current_odometer: number | null;
+  expected_distance: number | null;
+  operating_hours: number | null;
+  status: FuelRequestStatus;
+  created_at: string;
+  approvals: FuelApproval[];
+  issue: FuelIssue | null;
+}
+
+export interface FuelReceipt {
+  id: string;
+  fuel_issue_id: string;
+  receiver: { id: string; first_name: string; last_name: string; email: string };
+  quantity_received: number;
+  date_received: string;
+  receipt_number: string | null;
+  acknowledgement: boolean;
+  attachment: string | null;
+  remarks: string | null;
+}
+
+export interface FuelReconciliation {
+  id: string;
+  fuel_issue_id: string;
+  reconciled_by: { id: string; first_name: string; last_name: string; email: string };
+  quantity_issued: number;
+  quantity_used: number | null;
+  balance: number | null;
+  distance_travelled: number | null;
+  hours_operated: number | null;
+  comments: string | null;
+  reconciliation_date: string;
+}
+
+export interface FuelVoucher {
+  id: string;
+  voucher_number: string;
+  value: number | null;
+  litres: number | null;
+  assigned_user: { id: string; first_name: string; last_name: string; email: string } | null;
+  assigned_asset_description: string | null;
+  date_issued: string | null;
+  date_redeemed: string | null;
+  status: FuelVoucherStatus;
+  remarks: string | null;
+  created_at: string;
+}
+
+export interface FuelStockBalance {
+  depot_location_id: string;
+  depot_name: string;
+  fuel_type: FuelType;
+  quantity_on_hand: number;
+}
+
+export interface FuelDashboardSummary {
+  total_allocated_litres: number;
+  total_requested_litres: number;
+  total_approved_litres: number;
+  total_issued_litres: number;
+  total_received_litres: number;
+  total_consumed_litres: number;
+  remaining_balance_litres: number;
+  total_expenditure: number;
+  pending_requests: number;
+  pending_approvals: number;
+  unreconciled_transactions: number;
+  active_vehicles: number;
+  active_generators: number;
+  active_starlink_teams: number;
+  consumption_by_region: { region: string; litres_issued: number }[];
+  allocation_vs_consumption: { allocation_reference: string; allocated: number; issued: number }[];
+}

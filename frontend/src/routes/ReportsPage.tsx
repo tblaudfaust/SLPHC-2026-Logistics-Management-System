@@ -35,6 +35,10 @@ const STATUS_OPTIONS_BY_REPORT: Record<string, string[]> = {
   unaccounted_assets: [...ASSET_STATUSES],
   stock_transfer_accountability: ["IN_TRANSIT", "RECEIVED"],
   notification_delivery: ["PENDING", "SENT", "FAILED", "SKIPPED"],
+  fuel_allocation: ["ACTIVE", "EXHAUSTED", "EXPIRED", "CLOSED"],
+  fuel_request: [
+    "DRAFT", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "ISSUED", "RECEIVED", "RECONCILED",
+  ],
 };
 
 function downloadBlob(blob: Blob, filename: string) {

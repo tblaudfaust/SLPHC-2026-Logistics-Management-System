@@ -8,6 +8,7 @@ import { AssetsPage } from "@/routes/AssetsPage";
 import { AssetTagRedirect } from "@/routes/AssetTagRedirect";
 import { AuditPage } from "@/routes/AuditPage";
 import { DashboardPage } from "@/routes/DashboardPage";
+import { FuelPage } from "@/routes/FuelPage";
 import { InventoryPage } from "@/routes/InventoryPage";
 import { LocationsPage } from "@/routes/LocationsPage";
 import { LoginPage } from "@/routes/LoginPage";
@@ -39,6 +40,7 @@ export default function App() {
               <Route path="/procurement" element={<ProcurementPage />} />
               <Route path="/starlink" element={<StarlinkPage />} />
               <Route path="/starlink/:kitId" element={<StarlinkKitDetailPage />} />
+              <Route path="/fuel" element={<FuelPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/users" element={<UsersPage />} />

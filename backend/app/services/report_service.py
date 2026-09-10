@@ -29,8 +29,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.asset import Asset, AssetCategory, AssetStatusEvent
 from app.models.audit_log import AuditLog
+from app.models.fuel import FuelAllocation, FuelIssue, FuelRequest
 from app.models.inventory import GoodsReceipt, InventoryTransaction, StockTransfer
-from app.models.location import Location
+from app.models.location import District, Location, Region
 from app.models.notification import Notification
 from app.models.user import User
 
@@ -450,6 +451,129 @@ def _report_notification_delivery(db: Session, f: dict) -> ReportResult:
     return ReportResult("notification_delivery", "Notification Delivery Report", columns, rows, truncated)
 
 
+def _report_fuel_allocation(db: Session, f: dict) -> ReportResult:
+    start, end = _dt_range(f.get("date_from"), f.get("date_to"))
+    stmt = select(FuelAllocation).where(FuelAllocation.created_at >= start, FuelAllocation.created_at <= end)
+    if f.get("status"):
+        stmt = stmt.where(FuelAllocation.status == f["status"])
+    stmt = stmt.order_by(FuelAllocation.created_at.desc())
+    entries = db.scalars(stmt.limit(ROW_LIMIT + 1)).all()
+    entries, truncated = _cap(list(entries))
+
+    rows = [
+        {
+            "reference": a.allocation_reference,
+            "region": a.region.name if a.region else "-",
+            "district": a.district.name if a.district else "-",
+            "activity": a.activity.name if a.activity else "-",
+            "fuel_type": a.fuel_type,
+            "allocated_litres": float(a.allocated_litres),
+            "allocated_budget": float(a.allocated_budget) if a.allocated_budget else "-",
+            "start_date": a.start_date.isoformat(),
+            "end_date": a.end_date.isoformat(),
+            "status": a.status,
+        }
+        for a in entries
+    ]
+    columns = [
+        ("reference", "Reference"), ("region", "Region"), ("district", "District"), ("activity", "Activity"),
+        ("fuel_type", "Fuel Type"), ("allocated_litres", "Allocated (L)"), ("allocated_budget", "Budget"),
+        ("start_date", "Start"), ("end_date", "End"), ("status", "Status"),
+    ]
+    return ReportResult("fuel_allocation", "Fuel Allocation Report", columns, rows, truncated)
+
+
+def _report_fuel_request(db: Session, f: dict) -> ReportResult:
+    start, end = _dt_range(f.get("date_from"), f.get("date_to"))
+    stmt = (
+        select(FuelRequest)
+        .where(FuelRequest.created_at >= start, FuelRequest.created_at <= end)
+        .options(selectinload(FuelRequest.requester), selectinload(FuelRequest.region), selectinload(FuelRequest.district))
+    )
+    if f.get("status"):
+        stmt = stmt.where(FuelRequest.status == f["status"])
+    stmt = stmt.order_by(FuelRequest.created_at.desc())
+    entries = db.scalars(stmt.limit(ROW_LIMIT + 1)).all()
+    entries, truncated = _cap(list(entries))
+
+    rows = [
+        {
+            "reference": r.request_reference, "requester": r.requester.full_name if r.requester else "-",
+            "region": r.region.name if r.region else "-", "district": r.district.name if r.district else "-",
+            "asset_type": r.asset_type, "fuel_type": r.fuel_type,
+            "quantity_requested": float(r.quantity_requested), "purpose": r.purpose or "-", "status": r.status,
+            "date": r.created_at.strftime("%Y-%m-%d"),
+        }
+        for r in entries
+    ]
+    columns = [
+        ("reference", "Reference"), ("requester", "Requester"), ("region", "Region"), ("district", "District"),
+        ("asset_type", "Asset Type"), ("fuel_type", "Fuel Type"), ("quantity_requested", "Requested (L)"),
+        ("purpose", "Purpose"), ("status", "Status"), ("date", "Date"),
+    ]
+    return ReportResult("fuel_request", "Fuel Request Report", columns, rows, truncated)
+
+
+def _report_fuel_issuance(db: Session, f: dict) -> ReportResult:
+    start, end = _dt_range(f.get("date_from"), f.get("date_to"))
+    stmt = (
+        select(FuelIssue)
+        .join(FuelRequest, FuelIssue.fuel_request_id == FuelRequest.id)
+        .where(FuelIssue.created_at >= start, FuelIssue.created_at <= end)
+        .options(selectinload(FuelIssue.issued_by))
+        .order_by(FuelIssue.created_at.desc())
+    )
+    entries = db.scalars(stmt.limit(ROW_LIMIT + 1)).all()
+    entries, truncated = _cap(list(entries))
+
+    rows = [
+        {
+            "reference": i.issue_reference, "request_reference": i.request.request_reference,
+            "quantity_approved": float(i.quantity_approved), "quantity_issued": float(i.quantity_issued),
+            "price_per_litre": float(i.price_per_litre) if i.price_per_litre else "-",
+            "total_cost": float(i.total_cost) if i.total_cost else "-",
+            "issued_by": i.issued_by.full_name if i.issued_by else "-", "issue_date": i.issue_date.isoformat(),
+        }
+        for i in entries
+    ]
+    columns = [
+        ("reference", "Issue Reference"), ("request_reference", "Request Reference"),
+        ("quantity_approved", "Approved (L)"), ("quantity_issued", "Issued (L)"),
+        ("price_per_litre", "Price/Litre"), ("total_cost", "Total Cost"), ("issued_by", "Issued By"),
+        ("issue_date", "Issue Date"),
+    ]
+    return ReportResult("fuel_issuance", "Fuel Issuance Report", columns, rows, truncated)
+
+
+def _report_fuel_regional_consumption(db: Session, f: dict) -> ReportResult:
+    start, end = _dt_range(f.get("date_from"), f.get("date_to"))
+    stmt = (
+        select(
+            Region.name.label("region_name"), District.name.label("district_name"),
+            func.sum(FuelIssue.quantity_issued).label("litres_issued"), func.count(FuelIssue.id).label("issue_count"),
+        )
+        .select_from(FuelIssue)
+        .join(FuelRequest, FuelIssue.fuel_request_id == FuelRequest.id)
+        .outerjoin(Region, FuelRequest.region_id == Region.id)
+        .outerjoin(District, FuelRequest.district_id == District.id)
+        .where(FuelIssue.created_at >= start, FuelIssue.created_at <= end)
+        .group_by(Region.name, District.name)
+        .order_by(Region.name, District.name)
+    )
+    rows = [
+        {
+            "region": row.region_name or "-", "district": row.district_name or "-",
+            "litres_issued": float(row.litres_issued or 0), "issue_count": row.issue_count,
+        }
+        for row in db.execute(stmt).all()
+    ]
+    columns = [
+        ("region", "Region"), ("district", "District"), ("litres_issued", "Litres Issued"),
+        ("issue_count", "Issue Count"),
+    ]
+    return ReportResult("fuel_regional_consumption", "Regional & District Fuel Consumption Report", columns, rows, False)
+
+
 REPORT_DEFINITIONS: dict[str, dict] = {
     "warehouse_accountability": {
         "name": "Warehouse Accountability Report",
@@ -498,6 +622,30 @@ REPORT_DEFINITIONS: dict[str, dict] = {
         "description": "Email notification volume and delivery outcome (sent/failed/skipped) over a date range.",
         "filters": ["date_from", "date_to", "status"],
         "fn": _report_notification_delivery,
+    },
+    "fuel_allocation": {
+        "name": "Fuel Allocation Report",
+        "description": "Fuel allocations by region/district/activity, with allocated litres and budget.",
+        "filters": ["date_from", "date_to", "status"],
+        "fn": _report_fuel_allocation,
+    },
+    "fuel_request": {
+        "name": "Fuel Request Report",
+        "description": "Fuel requests with requester, asset type, quantity and status over a date range.",
+        "filters": ["date_from", "date_to", "status"],
+        "fn": _report_fuel_request,
+    },
+    "fuel_issuance": {
+        "name": "Fuel Issuance Report",
+        "description": "Fuel issued against approved requests, with cost and issuing officer.",
+        "filters": ["date_from", "date_to"],
+        "fn": _report_fuel_issuance,
+    },
+    "fuel_regional_consumption": {
+        "name": "Regional & District Fuel Consumption Report",
+        "description": "Litres issued grouped by region and district over a date range.",
+        "filters": ["date_from", "date_to"],
+        "fn": _report_fuel_regional_consumption,
     },
 }
 
