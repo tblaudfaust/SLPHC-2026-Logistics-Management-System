@@ -1,4 +1,5 @@
 import smtplib
+from email.header import Header
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -38,7 +39,7 @@ def send_email(
     else:
         message = MIMEText(body, "plain", "utf-8")
 
-    message["Subject"] = subject
+    message["Subject"] = Header(subject, "utf-8")
     message["From"] = f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>"
     message["To"] = to_address
 
