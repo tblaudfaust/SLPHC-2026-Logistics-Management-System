@@ -5,6 +5,7 @@ import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import client_ip, client_user_agent, get_db, require_permission
@@ -424,17 +425,62 @@ def update_asset(
     if not asset:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Asset not found.")
 
-    old_value = {"remarks": asset.remarks}
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changed_fields = payload.model_dump(exclude_unset=True)
+    old_value = {field: getattr(asset, field) for field in changed_fields}
+    for field, value in changed_fields.items():
         setattr(asset, field, value)
 
     audit_service.record(
         db, user_id=current_user.id, action="update", entity_type="asset", entity_id=str(asset.id),
-        old_value=old_value, new_value={"remarks": asset.remarks},
+        old_value=audit_service.jsonable(old_value), new_value=audit_service.jsonable(changed_fields),
         ip_address=client_ip(request), user_agent=client_user_agent(request),
     )
     db.commit()
     return db.execute(_asset_read_query().where(Asset.id == asset.id)).scalar_one()
+
+
+@router.delete("/assets/{asset_id}")
+def delete_asset(
+    asset_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("assets.delete")),
+):
+    """Only removes an asset with no history of its own (no status events
+    beyond registration, no transfers, not extended into a Vehicle/Generator/
+    Starlink kit) — this register's own docstring treats history as
+    append-only and non-negotiable, so an asset that has any is retired via
+    the status-change endpoint (mark DAMAGED/LOST/DISPOSED) instead of
+    removed outright."""
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Asset not found.")
+
+    old_value = {"asset_tag": asset.asset_tag, "category_id": str(asset.category_id), "status": asset.status}
+    if not asset_service.clear_registration_only_history(db, asset_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This asset has history (status changes, transfers, or a linked vehicle/generator/Starlink "
+            "record) so it can't be deleted — mark it Disposed instead to retire it.",
+        )
+    try:
+        db.delete(asset)
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This asset has history (status changes, transfers, or a linked vehicle/generator/Starlink "
+            "record) so it can't be deleted — mark it Disposed instead to retire it.",
+        )
+
+    audit_service.record(
+        db, user_id=current_user.id, action="delete", entity_type="asset", entity_id=str(asset_id),
+        old_value=old_value,
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    return {"detail": f"Asset {old_value['asset_tag']} deleted.", "hard_deleted": True}
 
 
 @router.post("/assets/{asset_id}/status", response_model=AssetRead)

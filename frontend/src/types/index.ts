@@ -203,6 +203,30 @@ export interface AssetRead {
   updated_at: string;
 }
 
+export interface AssetUpdate {
+  model_id?: string;
+  serial_number?: string;
+  imei_1?: string;
+  imei_2?: string;
+  mac_address?: string;
+  sim_or_phone_number?: string;
+  supplier_or_donor?: string;
+  procurement_batch?: string;
+  purchase_order_ref?: string;
+  date_acquired?: string;
+  date_received?: string;
+  unit_cost?: number;
+  currency?: string;
+  warranty_start?: string;
+  warranty_end?: string;
+  remarks?: string;
+}
+
+export interface DeleteResult {
+  detail: string;
+  hard_deleted: boolean;
+}
+
 export interface AssetStatusEvent {
   id: string;
   event_type: string;

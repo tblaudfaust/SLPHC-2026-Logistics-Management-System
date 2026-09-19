@@ -31,6 +31,24 @@ ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+def clear_registration_only_history(db: Session, asset_id: uuid.UUID) -> bool:
+    """Every asset gets a 'registered' AssetStatusEvent the moment it's
+    created (see register_asset/create_vehicle/create_generator) — that
+    event isn't accountability history worth blocking a delete over, it's
+    just the birth record duplicating the fact the asset existed at all.
+    If that's the ONLY event on file, removes it and returns True so the
+    caller can proceed with an actual delete; if there's anything beyond
+    it (a real status change, a transfer, etc.), leaves it alone and
+    returns False so the caller blocks the delete instead."""
+    events = db.scalars(select(AssetStatusEvent).where(AssetStatusEvent.asset_id == asset_id)).all()
+    if len(events) > 1 or any(e.event_type != "registered" for e in events):
+        return False
+    for event in events:
+        db.delete(event)
+    db.flush()
+    return True
+
+
 def generate_asset_tag(db: Session, category: AssetCategory) -> str:
     """Locks the category row so concurrent registrations never collide on the
     same sequence number (brief §6.1 Asset ID convention)."""

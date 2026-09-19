@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Plus, Upload } from "lucide-react";
+import { ArrowLeftRight, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
@@ -29,7 +29,16 @@ import { STATUS_BADGE_VARIANT, STATUS_LABEL } from "@/lib/assetStatus";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/authStore";
-import type { AssetCategory, AssetListItem, AssetModel, AssetTransfer, LocationRecord, Page } from "@/types";
+import type {
+  AssetCategory,
+  AssetListItem,
+  AssetModel,
+  AssetRead,
+  AssetTransfer,
+  DeleteResult,
+  LocationRecord,
+  Page,
+} from "@/types";
 
 const registerAssetSchema = z.object({
   category_id: z.string().min(1, "Choose a category"),
@@ -45,6 +54,26 @@ const registerAssetSchema = z.object({
 });
 
 type RegisterAssetValues = z.infer<typeof registerAssetSchema>;
+
+const editAssetSchema = z.object({
+  serial_number: z.string().optional(),
+  imei_1: z.string().optional(),
+  imei_2: z.string().optional(),
+  mac_address: z.string().optional(),
+  sim_or_phone_number: z.string().optional(),
+  supplier_or_donor: z.string().optional(),
+  procurement_batch: z.string().optional(),
+  purchase_order_ref: z.string().optional(),
+  date_acquired: z.string().optional(),
+  date_received: z.string().optional(),
+  unit_cost: z.coerce.number().optional(),
+  currency: z.string().optional(),
+  warranty_start: z.string().optional(),
+  warranty_end: z.string().optional(),
+  remarks: z.string().optional(),
+});
+
+type EditAssetValues = z.infer<typeof editAssetSchema>;
 
 export function AssetsPage() {
   const [tab, setTab] = useState<"register" | "transfers">("register");
@@ -90,7 +119,12 @@ function RegisterTab() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+  const [deletingAsset, setDeletingAsset] = useState<AssetListItem | null>(null);
   const queryClient = useQueryClient();
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const canEdit = hasPermission("assets.update");
+  const canDelete = hasPermission("assets.delete");
 
   const categoriesQuery = useAssetCategories("serialized");
 
@@ -172,6 +206,7 @@ function RegisterTab() {
               <TableHeaderCell>Serial Number</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
               <TableHeaderCell>Condition</TableHeaderCell>
+              {(canEdit || canDelete) && <TableHeaderCell></TableHeaderCell>}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -188,17 +223,54 @@ function RegisterTab() {
                   <Badge variant={STATUS_BADGE_VARIANT[asset.status]}>{STATUS_LABEL[asset.status]}</Badge>
                 </TableCell>
                 <TableCell>{asset.condition}</TableCell>
+                {(canEdit || canDelete) && (
+                  <TableCell>
+                    <div className="flex gap-2">
+                      {canEdit && (
+                        <Button size="sm" variant="secondary" onClick={() => setEditingAssetId(asset.id)}>
+                          <Pencil size={14} /> Edit
+                        </Button>
+                      )}
+                      {canDelete && (
+                        <Button size="sm" variant="destructive" onClick={() => setDeletingAsset(asset)}>
+                          <Trash2 size={14} /> Delete
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {assetsQuery.data.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-slate-400">
+                <TableCell colSpan={6} className="py-8 text-center text-slate-400">
                   No assets registered yet.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+      )}
+
+      {editingAssetId && (
+        <EditAssetDialog
+          assetId={editingAssetId}
+          onClose={() => setEditingAssetId(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["assets"] });
+            setEditingAssetId(null);
+          }}
+        />
+      )}
+
+      {deletingAsset && (
+        <DeleteAssetDialog
+          asset={deletingAsset}
+          onClose={() => setDeletingAsset(null)}
+          onDeleted={() => {
+            queryClient.invalidateQueries({ queryKey: ["assets"] });
+          }}
+        />
       )}
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Register asset" className="max-w-xl">
@@ -674,5 +746,219 @@ function RegisterAssetForm({
         {submitting ? "Registering..." : "Register asset"}
       </Button>
     </form>
+  );
+}
+
+function EditAssetDialog({
+  assetId,
+  onClose,
+  onSaved,
+}: {
+  assetId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const assetQuery = useQuery({
+    queryKey: ["asset", assetId],
+    queryFn: () => api.get<AssetRead>(`/assets/${assetId}`),
+  });
+
+  const updateAsset = useMutation({
+    mutationFn: (values: EditAssetValues) =>
+      api.put<AssetRead>(`/assets/${assetId}`, {
+        ...values,
+        unit_cost: values.unit_cost || undefined,
+      }),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={assetQuery.data ? `Edit ${assetQuery.data.asset_tag}` : "Edit asset"} className="max-w-xl">
+      {assetQuery.isLoading && (
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <Spinner /> Loading asset...
+        </div>
+      )}
+      {assetQuery.data && (
+        <EditAssetForm
+          asset={assetQuery.data}
+          submitting={updateAsset.isPending}
+          serverError={updateAsset.error instanceof ApiError ? updateAsset.error.message : null}
+          onSubmit={(values) => updateAsset.mutate(values)}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+function EditAssetForm({
+  asset,
+  submitting,
+  serverError,
+  onSubmit,
+}: {
+  asset: AssetRead;
+  submitting: boolean;
+  serverError: string | null;
+  onSubmit: (values: EditAssetValues) => void;
+}) {
+  const { register, handleSubmit } = useForm<EditAssetValues>({
+    resolver: zodResolver(editAssetSchema),
+    defaultValues: {
+      serial_number: asset.serial_number ?? "",
+      imei_1: asset.imei_1 ?? "",
+      imei_2: asset.imei_2 ?? "",
+      mac_address: asset.mac_address ?? "",
+      sim_or_phone_number: asset.sim_or_phone_number ?? "",
+      supplier_or_donor: asset.supplier_or_donor ?? "",
+      procurement_batch: asset.procurement_batch ?? "",
+      purchase_order_ref: asset.purchase_order_ref ?? "",
+      date_acquired: asset.date_acquired ?? "",
+      date_received: asset.date_received ?? "",
+      unit_cost: asset.unit_cost ?? undefined,
+      currency: asset.currency ?? "",
+      warranty_start: asset.warranty_start ?? "",
+      warranty_end: asset.warranty_end ?? "",
+      remarks: asset.remarks ?? "",
+    },
+  });
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="serial_number">Serial number</Label>
+          <Input id="serial_number" {...register("serial_number")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="sim_or_phone_number">SIM / phone number</Label>
+          <Input id="sim_or_phone_number" {...register("sim_or_phone_number")} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="imei_1">IMEI 1</Label>
+          <Input id="imei_1" {...register("imei_1")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="imei_2">IMEI 2</Label>
+          <Input id="imei_2" {...register("imei_2")} />
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="mac_address">MAC address</Label>
+        <Input id="mac_address" {...register("mac_address")} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="supplier_or_donor">Supplier / donor</Label>
+          <Input id="supplier_or_donor" {...register("supplier_or_donor")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="procurement_batch">Procurement batch</Label>
+          <Input id="procurement_batch" {...register("procurement_batch")} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="purchase_order_ref">Purchase order ref.</Label>
+          <Input id="purchase_order_ref" {...register("purchase_order_ref")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="unit_cost">Unit cost</Label>
+          <Input id="unit_cost" type="number" step="0.01" {...register("unit_cost")} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="date_acquired">Date acquired</Label>
+          <Input id="date_acquired" type="date" {...register("date_acquired")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="date_received">Date received</Label>
+          <Input id="date_received" type="date" {...register("date_received")} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="warranty_start">Warranty start</Label>
+          <Input id="warranty_start" type="date" {...register("warranty_start")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="warranty_end">Warranty end</Label>
+          <Input id="warranty_end" type="date" {...register("warranty_end")} />
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="remarks">Remarks</Label>
+        <Input id="remarks" {...register("remarks")} />
+      </div>
+
+      {serverError && (
+        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{serverError}</div>
+      )}
+
+      <Button type="submit" className="w-full" disabled={submitting}>
+        {submitting ? "Saving..." : "Save changes"}
+      </Button>
+    </form>
+  );
+}
+
+function DeleteAssetDialog({
+  asset,
+  onClose,
+  onDeleted,
+}: {
+  asset: AssetListItem;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete<DeleteResult>(`/assets/${asset.id}`),
+    onSuccess: onDeleted,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Delete ${asset.asset_tag}`}>
+      {!deleteMutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-500">
+            This permanently removes {asset.asset_tag} from the register. Only possible if it has no
+            history yet (no status changes, transfers, or linked vehicle/generator/Starlink record) —
+            if it does, mark it Disposed from its asset profile instead.
+          </p>
+          {deleteMutation.error instanceof ApiError && (
+            <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {deleteMutation.error.message}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? "Deleting..." : "Delete asset"}
+            </Button>
+          </div>
+        </>
+      )}
+
+      {deleteMutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-700">{deleteMutation.data.detail}</p>
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </>
+      )}
+    </Dialog>
   );
 }

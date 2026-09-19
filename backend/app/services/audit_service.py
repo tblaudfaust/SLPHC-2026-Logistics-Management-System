@@ -1,8 +1,28 @@
 import uuid
+from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
 from app.models.audit_log import AuditLog
+
+
+def jsonable(data: dict) -> dict:
+    """old_value/new_value are stored as JSONB — UUID, date/datetime, and the
+    Decimal SQLAlchemy returns for Numeric columns aren't JSON-native, so any
+    caller building a diff from ORM attributes or a payload dump should run
+    it through this first."""
+
+    def convert(value):
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
+
+    return {field: convert(value) for field, value in data.items()}
 
 
 def record(

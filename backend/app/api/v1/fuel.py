@@ -1,11 +1,12 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_db, require_permission
+from app.api.deps import client_ip, client_user_agent, get_db, require_permission
 from app.models.fuel import (
     CensusActivity,
     FuelAllocation,
@@ -24,6 +25,7 @@ from app.schemas.fuel import (
     CensusActivityRead,
     FuelAllocationCreate,
     FuelAllocationRead,
+    FuelAllocationUpdate,
     FuelApprovalDecision,
     FuelDashboardSummary,
     FuelIssueCreate,
@@ -36,16 +38,20 @@ from app.schemas.fuel import (
     FuelRequestDetailRead,
     FuelStationCreate,
     FuelStationRead,
+    FuelStationUpdate,
     FuelStockAdjustmentCreate,
     FuelStockBalance,
     FuelStockReceiptCreate,
     FuelVoucherCreate,
     FuelVoucherRead,
     FuelVoucherStatusUpdate,
+    FuelVoucherUpdate,
     GeneratorCreate,
     GeneratorRead,
+    GeneratorUpdate,
     VehicleCreate,
     VehicleRead,
+    VehicleUpdate,
 )
 from app.services import audit_service, fuel_service
 from app.services.pagination import paginate
@@ -103,6 +109,55 @@ def create_vehicle_endpoint(
     return vehicle
 
 
+@router.put("/vehicles/{vehicle_id}", response_model=VehicleRead)
+def update_vehicle_endpoint(
+    vehicle_id: uuid.UUID, payload: VehicleUpdate, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    vehicle = db.execute(
+        select(Vehicle).options(selectinload(Vehicle.asset)).where(Vehicle.id == vehicle_id)
+    ).scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vehicle not found.")
+    if payload.registration_number and payload.registration_number != vehicle.registration_number:
+        if db.scalar(select(Vehicle).where(Vehicle.registration_number == payload.registration_number)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "A vehicle with this registration number already exists.")
+    fuel_service.update_vehicle(
+        db, vehicle=vehicle, payload=payload, performed_by_id=current_user.id,
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    db.refresh(vehicle)
+    return vehicle
+
+
+@router.delete("/vehicles/{vehicle_id}")
+def delete_vehicle_endpoint(
+    vehicle_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    vehicle = db.execute(
+        select(Vehicle).options(selectinload(Vehicle.asset)).where(Vehicle.id == vehicle_id)
+    ).scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vehicle not found.")
+    tag = vehicle.asset.asset_tag
+    try:
+        fuel_service.delete_vehicle_or_generator(
+            db, extension=vehicle, entity_type="vehicle", performed_by_id=current_user.id,
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This vehicle has fuel requests or other history against it, so it can't be deleted — "
+            "mark its asset Disposed instead to retire it.",
+        )
+    return {"detail": f"Vehicle {tag} deleted.", "hard_deleted": True}
+
+
 # ---------------------------------------------------------------- generators
 
 @router.get("/generators", response_model=Page[GeneratorRead])
@@ -124,6 +179,52 @@ def create_generator_endpoint(
     return generator
 
 
+@router.put("/generators/{generator_id}", response_model=GeneratorRead)
+def update_generator_endpoint(
+    generator_id: uuid.UUID, payload: GeneratorUpdate, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    generator = db.execute(
+        select(Generator).options(selectinload(Generator.asset)).where(Generator.id == generator_id)
+    ).scalar_one_or_none()
+    if not generator:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Generator not found.")
+    fuel_service.update_generator(
+        db, generator=generator, payload=payload, performed_by_id=current_user.id,
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    db.refresh(generator)
+    return generator
+
+
+@router.delete("/generators/{generator_id}")
+def delete_generator_endpoint(
+    generator_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    generator = db.execute(
+        select(Generator).options(selectinload(Generator.asset)).where(Generator.id == generator_id)
+    ).scalar_one_or_none()
+    if not generator:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Generator not found.")
+    tag = generator.asset.asset_tag
+    try:
+        fuel_service.delete_vehicle_or_generator(
+            db, extension=generator, entity_type="generator", performed_by_id=current_user.id,
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This generator has fuel requests or other history against it, so it can't be deleted — "
+            "mark its asset Disposed instead to retire it.",
+        )
+    return {"detail": f"Generator {tag} deleted.", "hard_deleted": True}
+
+
 # ---------------------------------------------------------------- fuel stations
 
 @router.get("/stations", response_model=list[FuelStationRead])
@@ -142,6 +243,70 @@ def create_station(
     db.commit()
     db.refresh(station)
     return station
+
+
+@router.put("/stations/{station_id}", response_model=FuelStationRead)
+def update_station(
+    station_id: uuid.UUID, payload: FuelStationUpdate, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    station = db.get(FuelStation, station_id)
+    if not station:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fuel station not found.")
+
+    changed = payload.model_dump(exclude_unset=True)
+    old_value = {field: getattr(station, field) for field in changed}
+    for field, value in changed.items():
+        setattr(station, field, value)
+
+    audit_service.record(
+        db, user_id=current_user.id, action="update", entity_type="fuel_station", entity_id=str(station.id),
+        old_value=audit_service.jsonable(old_value), new_value=audit_service.jsonable(changed),
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    db.refresh(station)
+    return station
+
+
+@router.delete("/stations/{station_id}")
+def delete_station(
+    station_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    """Tries a real delete first; falls back to deactivating (is_active=False,
+    already how list_stations filters) if fuel issues have been recorded
+    against it — same delete-or-deactivate shape as delete_user."""
+    station = db.get(FuelStation, station_id)
+    if not station:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fuel station not found.")
+    name = station.name
+
+    try:
+        db.delete(station)
+        db.flush()
+        audit_service.record(
+            db, user_id=current_user.id, action="delete", entity_type="fuel_station", entity_id=str(station_id),
+            old_value={"name": name},
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+        )
+        db.commit()
+        return {"detail": f"Fuel station {name} deleted.", "hard_deleted": True}
+    except IntegrityError:
+        db.rollback()
+        station = db.get(FuelStation, station_id)
+        station.is_active = False
+        audit_service.record(
+            db, user_id=current_user.id, action="deactivate", entity_type="fuel_station", entity_id=str(station_id),
+            old_value={"is_active": True}, new_value={"is_active": False},
+            reason="Delete requested; station has fuel issuance history so it was deactivated instead.",
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+        )
+        db.commit()
+        return {
+            "detail": f"Fuel station {name} has issuance history, so it was deactivated instead of deleted.",
+            "hard_deleted": False,
+        }
 
 
 # ---------------------------------------------------------------- allocations
@@ -184,6 +349,64 @@ def create_allocation(
     db.commit()
     db.refresh(allocation)
     return _allocation_read(db, allocation)
+
+
+@router.put("/allocations/{allocation_id}", response_model=FuelAllocationRead)
+def update_allocation_endpoint(
+    allocation_id: uuid.UUID, payload: FuelAllocationUpdate, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    allocation = db.get(FuelAllocation, allocation_id)
+    if not allocation:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fuel allocation not found.")
+    fuel_service.update_allocation(
+        db, allocation=allocation, payload=payload, performed_by_id=current_user.id,
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    db.refresh(allocation)
+    return _allocation_read(db, allocation)
+
+
+@router.delete("/allocations/{allocation_id}")
+def delete_allocation(
+    allocation_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    """Tries a real delete first; falls back to status=CLOSED if any fuel
+    request has drawn against it — same delete-or-deactivate shape used
+    elsewhere (delete_user, delete_station)."""
+    allocation = db.get(FuelAllocation, allocation_id)
+    if not allocation:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fuel allocation not found.")
+    reference = allocation.allocation_reference
+
+    try:
+        db.delete(allocation)
+        db.flush()
+        audit_service.record(
+            db, user_id=current_user.id, action="delete", entity_type="fuel_allocation", entity_id=str(allocation_id),
+            old_value={"reference": reference},
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+        )
+        db.commit()
+        return {"detail": f"Allocation {reference} deleted.", "hard_deleted": True}
+    except IntegrityError:
+        db.rollback()
+        allocation = db.get(FuelAllocation, allocation_id)
+        previous_status = allocation.status
+        allocation.status = "CLOSED"
+        audit_service.record(
+            db, user_id=current_user.id, action="update", entity_type="fuel_allocation", entity_id=str(allocation_id),
+            old_value={"status": previous_status}, new_value={"status": "CLOSED"},
+            ip_address=client_ip(request), user_agent=client_user_agent(request),
+            reason="Delete requested; allocation has requests against it so it was closed instead.",
+        )
+        db.commit()
+        return {
+            "detail": f"Allocation {reference} has requests against it, so it was closed instead of deleted.",
+            "hard_deleted": False,
+        }
 
 
 # ---------------------------------------------------------------- requests
@@ -345,6 +568,54 @@ def create_voucher(
     db.commit()
     db.refresh(voucher)
     return voucher
+
+
+@router.put("/vouchers/{voucher_id}", response_model=FuelVoucherRead)
+def update_voucher(
+    voucher_id: uuid.UUID, payload: FuelVoucherUpdate, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    """Edits the voucher's own descriptive fields; status transitions stay on
+    the dedicated /status endpoint below rather than being folded in here."""
+    voucher = db.get(FuelVoucher, voucher_id)
+    if not voucher:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Voucher not found.")
+    if payload.voucher_number and payload.voucher_number != voucher.voucher_number:
+        if db.scalar(select(FuelVoucher).where(FuelVoucher.voucher_number == payload.voucher_number)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "A voucher with this number already exists.")
+
+    changed = payload.model_dump(exclude_unset=True)
+    old_value = {field: getattr(voucher, field) for field in changed}
+    for field, value in changed.items():
+        setattr(voucher, field, value)
+
+    audit_service.record(
+        db, user_id=current_user.id, action="update", entity_type="fuel_voucher", entity_id=str(voucher.id),
+        old_value=audit_service.jsonable(old_value), new_value=audit_service.jsonable(changed),
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    db.refresh(voucher)
+    return voucher
+
+
+@router.delete("/vouchers/{voucher_id}")
+def delete_voucher(
+    voucher_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("fuel.manage")),
+):
+    voucher = db.get(FuelVoucher, voucher_id)
+    if not voucher:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Voucher not found.")
+    number = voucher.voucher_number
+    db.delete(voucher)
+    audit_service.record(
+        db, user_id=current_user.id, action="delete", entity_type="fuel_voucher", entity_id=str(voucher_id),
+        old_value={"voucher_number": number},
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    return {"detail": f"Voucher {number} deleted.", "hard_deleted": True}
 
 
 @router.put("/vouchers/{voucher_id}/status", response_model=FuelVoucherRead)

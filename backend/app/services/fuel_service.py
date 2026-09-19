@@ -126,6 +126,81 @@ def create_generator(db: Session, *, payload, performed_by_id: uuid.UUID | None)
     return generator
 
 
+def _update_extension(
+    db: Session, *, extension, payload, performed_by_id: uuid.UUID | None, entity_type: str,
+    ip_address: str | None, user_agent: str | None,
+):
+    """Shared by update_vehicle/update_generator. Deliberately doesn't touch
+    the underlying Asset's condition/current_location_id — the plain Asset
+    register has no direct edit for those either (only the dedicated
+    status-change/transfer flows do, since Asset treats that history as
+    append-only), so a vehicle/generator's asset follows the same path via
+    the Asset Profile page rather than a shortcut here."""
+    changed = payload.model_dump(exclude_unset=True)
+    old_value = {field: getattr(extension, field) for field in changed}
+    for field, value in changed.items():
+        setattr(extension, field, value)
+
+    db.flush()
+    audit_service.record(
+        db, user_id=performed_by_id, action="update", entity_type=entity_type, entity_id=str(extension.id),
+        old_value=audit_service.jsonable(old_value), new_value=audit_service.jsonable(changed),
+        ip_address=ip_address, user_agent=user_agent,
+    )
+
+
+def update_vehicle(
+    db: Session, *, vehicle: Vehicle, payload, performed_by_id: uuid.UUID | None,
+    ip_address: str | None = None, user_agent: str | None = None,
+) -> Vehicle:
+    _update_extension(
+        db, extension=vehicle, payload=payload, performed_by_id=performed_by_id,
+        entity_type="vehicle", ip_address=ip_address, user_agent=user_agent,
+    )
+    return vehicle
+
+
+def update_generator(
+    db: Session, *, generator: Generator, payload, performed_by_id: uuid.UUID | None,
+    ip_address: str | None = None, user_agent: str | None = None,
+) -> Generator:
+    _update_extension(
+        db, extension=generator, payload=payload, performed_by_id=performed_by_id,
+        entity_type="generator", ip_address=ip_address, user_agent=user_agent,
+    )
+    return generator
+
+
+def delete_vehicle_or_generator(
+    db: Session, *, extension, entity_type: str, performed_by_id: uuid.UUID | None,
+    ip_address: str | None = None, user_agent: str | None = None,
+) -> None:
+    """Removes both the Vehicle/Generator row and its underlying Asset row —
+    the asset only exists to represent this vehicle/generator, per how
+    create_vehicle/create_generator paired them. asset_service.record_event
+    wrote a 'registered' AssetStatusEvent for that asset the moment it was
+    created, same as any plain asset, so that single event is cleared first
+    (it's a birth record, not accountability history) — anything beyond it,
+    or an IntegrityError from something else referencing either row (e.g. a
+    fuel_request naming this vehicle/generator), blocks the delete."""
+    asset = extension.asset
+    old_value = {"asset_tag": asset.asset_tag, "id": str(extension.id)}
+    if not asset_service.clear_registration_only_history(db, asset.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This {entity_type} has history against it, so it can't be deleted — mark its asset "
+            "Disposed instead to retire it.",
+        )
+    db.delete(extension)
+    db.flush()
+    db.delete(asset)
+    db.flush()
+    audit_service.record(
+        db, user_id=performed_by_id, action="delete", entity_type=entity_type, entity_id=old_value["id"],
+        old_value=old_value, ip_address=ip_address, user_agent=user_agent,
+    )
+
+
 # --------------------------------------------------------------------------
 # Fuel efficiency (brief formulas)
 # --------------------------------------------------------------------------
@@ -181,6 +256,36 @@ def check_allocation_balance(db: Session, allocation: FuelAllocation, additional
             f"Requested quantity ({additional_litres}L) exceeds the remaining balance on "
             f"{allocation.allocation_reference} ({remaining}L of {allocation.allocated_litres}L left).",
         )
+
+
+def update_allocation(
+    db: Session, *, allocation: FuelAllocation, payload, performed_by_id: uuid.UUID | None,
+    ip_address: str | None = None, user_agent: str | None = None,
+) -> FuelAllocation:
+    """Blocks shrinking allocated_litres below what's already committed to
+    it — the same overdraw guard check_allocation_balance enforces on new
+    requests, applied here so editing an allocation can't retroactively put
+    it underwater against requests that were valid when submitted."""
+    changed = payload.model_dump(exclude_unset=True)
+    if "allocated_litres" in changed:
+        committed = allocation_committed_litres(db, allocation.id)
+        if changed["allocated_litres"] < committed["requested"]:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Cannot reduce allocated litres below {committed['requested']}L — that much is already "
+                f"committed to non-rejected requests against {allocation.allocation_reference}.",
+            )
+
+    old_value = {field: getattr(allocation, field) for field in changed}
+    for field, value in changed.items():
+        setattr(allocation, field, value)
+
+    audit_service.record(
+        db, user_id=performed_by_id, action="update", entity_type="fuel_allocation", entity_id=str(allocation.id),
+        old_value=audit_service.jsonable(old_value), new_value=audit_service.jsonable(changed),
+        ip_address=ip_address, user_agent=user_agent,
+    )
+    return allocation
 
 
 # --------------------------------------------------------------------------

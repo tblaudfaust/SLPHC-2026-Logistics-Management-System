@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.models.fuel import FUEL_REQUEST_ASSET_TYPES, VEHICLE_TYPES
+from app.models.fuel import ALLOCATION_STATUSES, FUEL_REQUEST_ASSET_TYPES, VEHICLE_TYPES
 
 
 # --- Shared summaries (kept local to this module, same convention already
@@ -93,6 +93,17 @@ class VehicleRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VehicleUpdate(BaseModel):
+    registration_number: str | None = None
+    vehicle_type: str | None = None
+    make: str | None = None
+    model: str | None = None
+    fuel_type: str | None = None
+    tank_capacity: float | None = None
+    assigned_driver_name: str | None = None
+    current_odometer: int | None = None
+
+
 class GeneratorCreate(BaseModel):
     asset_code: str | None = Field(default=None, description="Optional custom asset tag suffix; auto-generated if omitted")
     capacity_kva: float | None = None
@@ -112,6 +123,12 @@ class GeneratorRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class GeneratorUpdate(BaseModel):
+    capacity_kva: float | None = None
+    fuel_type: str | None = None
+    current_hour_meter: float | None = None
+
+
 # --- Fuel stations ---
 
 class FuelStationCreate(BaseModel):
@@ -128,6 +145,12 @@ class FuelStationRead(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
+
+
+class FuelStationUpdate(BaseModel):
+    supplier_id: uuid.UUID | None = None
+    name: str | None = None
+    location_id: uuid.UUID | None = None
 
 
 # --- Fuel allocations ---
@@ -162,6 +185,18 @@ class FuelAllocationRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class FuelAllocationUpdate(BaseModel):
+    region_id: uuid.UUID | None = None
+    district_id: uuid.UUID | None = None
+    activity_id: uuid.UUID | None = None
+    fuel_type: str | None = None
+    allocated_litres: float | None = Field(default=None, gt=0)
+    allocated_budget: float | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    status: str | None = Field(default=None, description=f"One of: {', '.join(ALLOCATION_STATUSES)}")
 
 
 # --- Fuel requests ---
@@ -310,6 +345,16 @@ class FuelVoucherCreate(BaseModel):
 class FuelVoucherStatusUpdate(BaseModel):
     status: str = Field(description="ISSUED / REDEEMED / CANCELLED / LOST / RECONCILED")
     date_redeemed: date | None = None
+    remarks: str | None = None
+
+
+class FuelVoucherUpdate(BaseModel):
+    voucher_number: str | None = None
+    value: float | None = None
+    litres: float | None = None
+    assigned_user_id: uuid.UUID | None = None
+    assigned_asset_description: str | None = None
+    date_issued: date | None = None
     remarks: str | None = None
 
 

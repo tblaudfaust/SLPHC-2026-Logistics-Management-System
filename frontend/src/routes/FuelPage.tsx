@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import {
@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/authStore";
 import type {
   CensusActivity,
+  DeleteResult,
   District,
   FuelAllocation,
   FuelDashboardSummary,
@@ -136,6 +137,51 @@ function Kpi({ label, value, tone }: { label: string; value: string | number; to
       </p>
       <p className="mt-1 text-xs text-slate-500">{label}</p>
     </div>
+  );
+}
+
+function ConfirmDeleteDialog({
+  title,
+  description,
+  mutationFn,
+  onClose,
+  onDeleted,
+}: {
+  title: string;
+  description: string;
+  mutationFn: () => Promise<DeleteResult>;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const mutation = useMutation({ mutationFn, onSuccess: onDeleted });
+
+  return (
+    <Dialog open onClose={onClose} title={title}>
+      {!mutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-500">{description}</p>
+          {mutation.error instanceof ApiError && (
+            <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{mutation.error.message}</div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+              {mutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </>
+      )}
+      {mutation.data && (
+        <>
+          <p className="mb-4 text-sm text-slate-700">{mutation.data.detail}</p>
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </>
+      )}
+    </Dialog>
   );
 }
 
@@ -852,6 +898,8 @@ type VehicleValues = z.infer<typeof vehicleSchema>;
 
 function VehiclesTab({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingVehicle, setEditingVehicle] = useState<FuelVehicle | null>(null);
+  const [deletingVehicle, setDeletingVehicle] = useState<FuelVehicle | null>(null);
   const queryClient = useQueryClient();
   const { options: warehouseOptions } = useWarehouseOptions();
 
@@ -897,6 +945,7 @@ function VehiclesTab({ canManage }: { canManage: boolean }) {
               <TableHeaderCell>Driver</TableHeaderCell>
               <TableHeaderCell>Odometer</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              {canManage && <TableHeaderCell></TableHeaderCell>}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -910,14 +959,48 @@ function VehiclesTab({ canManage }: { canManage: boolean }) {
                 <TableCell>{v.assigned_driver_name ?? "-"}</TableCell>
                 <TableCell>{v.current_odometer.toLocaleString()} km</TableCell>
                 <TableCell><Badge variant="neutral">{v.asset.status}</Badge></TableCell>
+                {canManage && (
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setEditingVehicle(v)}>
+                        <Pencil size={14} /> Edit
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => setDeletingVehicle(v)}>
+                        <Trash2 size={14} /> Delete
+                      </Button>
+                    </div>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {vehiclesQuery.data.items.length === 0 && (
-              <TableRow><TableCell colSpan={8} className="py-8 text-center text-slate-400">No vehicles registered yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-8 text-center text-slate-400">No vehicles registered yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       )}
+
+      {editingVehicle && (
+        <EditVehicleDialog
+          vehicle={editingVehicle}
+          onClose={() => setEditingVehicle(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["fuel-vehicles"] });
+            setEditingVehicle(null);
+          }}
+        />
+      )}
+
+      {deletingVehicle && (
+        <ConfirmDeleteDialog
+          title={`Delete ${deletingVehicle.registration_number}`}
+          description="This permanently removes the vehicle and its underlying asset. Only possible if it has no fuel requests or other history yet — if it does, mark its asset Disposed instead."
+          mutationFn={() => api.delete<DeleteResult>(`/fuel/vehicles/${deletingVehicle.id}`)}
+          onClose={() => setDeletingVehicle(null)}
+          onDeleted={() => queryClient.invalidateQueries({ queryKey: ["fuel-vehicles"] })}
+        />
+      )}
+
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Register vehicle" className="max-w-xl">
         <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -978,6 +1061,101 @@ function VehiclesTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+const vehicleEditSchema = z.object({
+  registration_number: z.string().min(1, "Required"),
+  vehicle_type: z.enum(["CAR", "PICKUP", "SUV", "TRUCK", "BUS", "MOTORCYCLE", "OTHER"]),
+  make: z.string().optional(),
+  model: z.string().optional(),
+  fuel_type: z.enum(["PETROL", "DIESEL"]),
+  tank_capacity: z.coerce.number().optional(),
+  assigned_driver_name: z.string().optional(),
+  current_odometer: z.coerce.number().default(0),
+});
+type VehicleEditValues = z.infer<typeof vehicleEditSchema>;
+
+function EditVehicleDialog({
+  vehicle,
+  onClose,
+  onSaved,
+}: {
+  vehicle: FuelVehicle;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { register, handleSubmit } = useForm<VehicleEditValues>({
+    resolver: zodResolver(vehicleEditSchema),
+    defaultValues: {
+      registration_number: vehicle.registration_number,
+      vehicle_type: vehicle.vehicle_type as VehicleEditValues["vehicle_type"],
+      make: vehicle.make ?? "",
+      model: vehicle.model ?? "",
+      fuel_type: vehicle.fuel_type as VehicleEditValues["fuel_type"],
+      tank_capacity: vehicle.tank_capacity ?? undefined,
+      assigned_driver_name: vehicle.assigned_driver_name ?? "",
+      current_odometer: vehicle.current_odometer,
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (values: VehicleEditValues) => api.put(`/fuel/vehicles/${vehicle.id}`, values),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Edit ${vehicle.registration_number}`} className="max-w-xl">
+      <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="registration_number">Registration number</Label>
+            <Input id="registration_number" {...register("registration_number")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="vehicle_type">Type</Label>
+            <Select id="vehicle_type" {...register("vehicle_type")}>
+              {["CAR", "PICKUP", "SUV", "TRUCK", "BUS", "MOTORCYCLE", "OTHER"].map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5"><Label htmlFor="make">Make</Label><Input id="make" {...register("make")} /></div>
+          <div className="space-y-1.5"><Label htmlFor="model">Model</Label><Input id="model" {...register("model")} /></div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="fuel_type">Fuel type</Label>
+            <Select id="fuel_type" {...register("fuel_type")}>
+              <option value="DIESEL">Diesel</option>
+              <option value="PETROL">Petrol</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="tank_capacity">Tank capacity (L)</Label>
+            <Input id="tank_capacity" type="number" {...register("tank_capacity")} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="assigned_driver_name">Assigned driver</Label>
+            <Input id="assigned_driver_name" {...register("assigned_driver_name")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="current_odometer">Current odometer</Label>
+            <Input id="current_odometer" type="number" {...register("current_odometer")} />
+          </div>
+        </div>
+        {updateMutation.error instanceof ApiError && (
+          <p className="text-xs text-red-600">{updateMutation.error.message}</p>
+        )}
+        <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+          {updateMutation.isPending ? "Saving..." : "Save changes"}
+        </Button>
+      </form>
+    </Dialog>
+  );
+}
+
 const generatorSchema = z.object({
   capacity_kva: z.coerce.number().optional(),
   fuel_type: z.enum(["PETROL", "DIESEL"]),
@@ -988,6 +1166,8 @@ type GeneratorValues = z.infer<typeof generatorSchema>;
 
 function GeneratorsTab({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingGenerator, setEditingGenerator] = useState<FuelGenerator | null>(null);
+  const [deletingGenerator, setDeletingGenerator] = useState<FuelGenerator | null>(null);
   const queryClient = useQueryClient();
   const { options: warehouseOptions } = useWarehouseOptions();
 
@@ -1030,6 +1210,7 @@ function GeneratorsTab({ canManage }: { canManage: boolean }) {
               <TableHeaderCell>Fuel</TableHeaderCell>
               <TableHeaderCell>Hour Meter</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              {canManage && <TableHeaderCell></TableHeaderCell>}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -1040,14 +1221,48 @@ function GeneratorsTab({ canManage }: { canManage: boolean }) {
                 <TableCell>{g.fuel_type}</TableCell>
                 <TableCell>{g.current_hour_meter.toLocaleString()} hrs</TableCell>
                 <TableCell><Badge variant="neutral">{g.asset.status}</Badge></TableCell>
+                {canManage && (
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setEditingGenerator(g)}>
+                        <Pencil size={14} /> Edit
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => setDeletingGenerator(g)}>
+                        <Trash2 size={14} /> Delete
+                      </Button>
+                    </div>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {generatorsQuery.data.items.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="py-8 text-center text-slate-400">No generators registered yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-8 text-center text-slate-400">No generators registered yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       )}
+
+      {editingGenerator && (
+        <EditGeneratorDialog
+          generator={editingGenerator}
+          onClose={() => setEditingGenerator(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["fuel-generators"] });
+            setEditingGenerator(null);
+          }}
+        />
+      )}
+
+      {deletingGenerator && (
+        <ConfirmDeleteDialog
+          title={`Delete ${deletingGenerator.asset.asset_tag}`}
+          description="This permanently removes the generator and its underlying asset. Only possible if it has no fuel requests or other history yet — if it does, mark its asset Disposed instead."
+          mutationFn={() => api.delete<DeleteResult>(`/fuel/generators/${deletingGenerator.id}`)}
+          onClose={() => setDeletingGenerator(null)}
+          onDeleted={() => queryClient.invalidateQueries({ queryKey: ["fuel-generators"] })}
+        />
+      )}
+
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Register generator" className="max-w-lg">
         <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -1084,6 +1299,67 @@ function GeneratorsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+const generatorEditSchema = z.object({
+  capacity_kva: z.coerce.number().optional(),
+  fuel_type: z.enum(["PETROL", "DIESEL"]),
+  current_hour_meter: z.coerce.number().default(0),
+});
+type GeneratorEditValues = z.infer<typeof generatorEditSchema>;
+
+function EditGeneratorDialog({
+  generator,
+  onClose,
+  onSaved,
+}: {
+  generator: FuelGenerator;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { register, handleSubmit } = useForm<GeneratorEditValues>({
+    resolver: zodResolver(generatorEditSchema),
+    defaultValues: {
+      capacity_kva: generator.capacity_kva ?? undefined,
+      fuel_type: generator.fuel_type as GeneratorEditValues["fuel_type"],
+      current_hour_meter: generator.current_hour_meter,
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (values: GeneratorEditValues) => api.put(`/fuel/generators/${generator.id}`, values),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Edit ${generator.asset.asset_tag}`} className="max-w-lg">
+      <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="capacity_kva">Capacity (kVA)</Label>
+            <Input id="capacity_kva" type="number" {...register("capacity_kva")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="fuel_type">Fuel type</Label>
+            <Select id="fuel_type" {...register("fuel_type")}>
+              <option value="DIESEL">Diesel</option>
+              <option value="PETROL">Petrol</option>
+            </Select>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="current_hour_meter">Current hour meter</Label>
+          <Input id="current_hour_meter" type="number" step="0.1" {...register("current_hour_meter")} />
+        </div>
+        {updateMutation.error instanceof ApiError && (
+          <p className="text-xs text-red-600">{updateMutation.error.message}</p>
+        )}
+        <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+          {updateMutation.isPending ? "Saving..." : "Save changes"}
+        </Button>
+      </form>
+    </Dialog>
+  );
+}
+
 const stationSchema = z.object({
   supplier_id: z.string().min(1, "Choose a supplier"),
   name: z.string().min(1, "Required"),
@@ -1093,6 +1369,8 @@ type StationValues = z.infer<typeof stationSchema>;
 
 function StationsTab({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingStation, setEditingStation] = useState<FuelStation | null>(null);
+  const [deletingStation, setDeletingStation] = useState<FuelStation | null>(null);
   const queryClient = useQueryClient();
   const { options: warehouseOptions } = useWarehouseOptions();
   const suppliersQuery = useQuery({ queryKey: ["suppliers"], queryFn: () => api.get<Page<Supplier>>("/suppliers", { page_size: 100 }) });
@@ -1125,6 +1403,7 @@ function StationsTab({ canManage }: { canManage: boolean }) {
               <TableHeaderCell>Name</TableHeaderCell>
               <TableHeaderCell>Location</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              {canManage && <TableHeaderCell></TableHeaderCell>}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -1133,14 +1412,49 @@ function StationsTab({ canManage }: { canManage: boolean }) {
                 <TableCell className="font-medium text-slate-900">{s.name}</TableCell>
                 <TableCell>{s.location?.name ?? "-"}</TableCell>
                 <TableCell><Badge variant={s.is_active ? "success" : "neutral"}>{s.is_active ? "Active" : "Inactive"}</Badge></TableCell>
+                {canManage && (
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setEditingStation(s)}>
+                        <Pencil size={14} /> Edit
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => setDeletingStation(s)}>
+                        <Trash2 size={14} /> Delete
+                      </Button>
+                    </div>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {stationsQuery.data.length === 0 && (
-              <TableRow><TableCell colSpan={3} className="py-8 text-center text-slate-400">No fuel stations yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={4} className="py-8 text-center text-slate-400">No fuel stations yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       )}
+
+      {editingStation && (
+        <EditStationDialog
+          station={editingStation}
+          suppliers={suppliersQuery.data?.items ?? []}
+          onClose={() => setEditingStation(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["fuel-stations"] });
+            setEditingStation(null);
+          }}
+        />
+      )}
+
+      {deletingStation && (
+        <ConfirmDeleteDialog
+          title={`Delete ${deletingStation.name}`}
+          description="If fuel has ever been issued from this station, it will be deactivated instead of deleted so that issuance history stays intact."
+          mutationFn={() => api.delete<DeleteResult>(`/fuel/stations/${deletingStation.id}`)}
+          onClose={() => setDeletingStation(null)}
+          onDeleted={() => queryClient.invalidateQueries({ queryKey: ["fuel-stations"] })}
+        />
+      )}
+
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="New fuel station">
         <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-4">
           <div className="space-y-1.5">
@@ -1171,6 +1485,65 @@ function StationsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+function EditStationDialog({
+  station,
+  suppliers,
+  onClose,
+  onSaved,
+}: {
+  station: FuelStation;
+  suppliers: Supplier[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { options: warehouseOptions } = useWarehouseOptions();
+  const { register, handleSubmit } = useForm<StationValues>({
+    resolver: zodResolver(stationSchema),
+    defaultValues: {
+      supplier_id: station.supplier_id,
+      name: station.name,
+      location_id: station.location?.id ?? "",
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (values: StationValues) =>
+      api.put(`/fuel/stations/${station.id}`, { ...values, location_id: values.location_id || undefined }),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Edit ${station.name}`}>
+      <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="supplier_id">Supplier / vendor</Label>
+          <Select id="supplier_id" {...register("supplier_id")}>
+            <option value="">Select a supplier...</option>
+            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="name">Station name</Label>
+          <Input id="name" {...register("name")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="location_id">Location (optional)</Label>
+          <Select id="location_id" {...register("location_id")}>
+            <option value="">Unspecified</option>
+            {warehouseOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </Select>
+        </div>
+        {updateMutation.error instanceof ApiError && (
+          <p className="text-xs text-red-600">{updateMutation.error.message}</p>
+        )}
+        <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+          {updateMutation.isPending ? "Saving..." : "Save changes"}
+        </Button>
+      </form>
+    </Dialog>
+  );
+}
+
 const allocationSchema = z.object({
   region_id: z.string().optional(),
   district_id: z.string().optional(),
@@ -1185,6 +1558,8 @@ type AllocationValues = z.infer<typeof allocationSchema>;
 
 function AllocationsTab({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingAllocation, setEditingAllocation] = useState<FuelAllocation | null>(null);
+  const [deletingAllocation, setDeletingAllocation] = useState<FuelAllocation | null>(null);
   const queryClient = useQueryClient();
   const regionsQuery = useQuery({ queryKey: ["regions"], queryFn: () => api.get<Region[]>("/regions") });
   const districtsQuery = useQuery({ queryKey: ["districts"], queryFn: () => api.get<District[]>("/districts") });
@@ -1234,6 +1609,7 @@ function AllocationsTab({ canManage }: { canManage: boolean }) {
               <TableHeaderCell>Requested</TableHeaderCell>
               <TableHeaderCell>Remaining</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              {canManage && <TableHeaderCell></TableHeaderCell>}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -1249,14 +1625,51 @@ function AllocationsTab({ canManage }: { canManage: boolean }) {
                   {a.litres_remaining.toLocaleString()}L
                 </TableCell>
                 <TableCell><Badge variant={a.status === "ACTIVE" ? "success" : "neutral"}>{a.status}</Badge></TableCell>
+                {canManage && (
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setEditingAllocation(a)}>
+                        <Pencil size={14} /> Edit
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => setDeletingAllocation(a)}>
+                        <Trash2 size={14} /> Delete
+                      </Button>
+                    </div>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {allocationsQuery.data.length === 0 && (
-              <TableRow><TableCell colSpan={8} className="py-8 text-center text-slate-400">No fuel allocations yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-8 text-center text-slate-400">No fuel allocations yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       )}
+
+      {editingAllocation && (
+        <EditAllocationDialog
+          allocation={editingAllocation}
+          regions={regionsQuery.data ?? []}
+          districts={districtsQuery.data ?? []}
+          activities={activitiesQuery.data ?? []}
+          onClose={() => setEditingAllocation(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["fuel-allocations"] });
+            setEditingAllocation(null);
+          }}
+        />
+      )}
+
+      {deletingAllocation && (
+        <ConfirmDeleteDialog
+          title={`Delete ${deletingAllocation.allocation_reference}`}
+          description="If any fuel request has drawn against this allocation, it will be closed instead of deleted so the request history stays intact."
+          mutationFn={() => api.delete<DeleteResult>(`/fuel/allocations/${deletingAllocation.id}`)}
+          onClose={() => setDeletingAllocation(null)}
+          onDeleted={() => queryClient.invalidateQueries({ queryKey: ["fuel-allocations"] })}
+        />
+      )}
+
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="New fuel allocation" className="max-w-xl">
         <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -1313,6 +1726,126 @@ function AllocationsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+const allocationEditSchema = z.object({
+  region_id: z.string().optional(),
+  district_id: z.string().optional(),
+  activity_id: z.string().optional(),
+  fuel_type: z.enum(["PETROL", "DIESEL"]),
+  allocated_litres: z.coerce.number().positive(),
+  allocated_budget: z.coerce.number().optional(),
+  start_date: z.string().min(1, "Required"),
+  end_date: z.string().min(1, "Required"),
+  status: z.enum(["ACTIVE", "EXHAUSTED", "EXPIRED", "CLOSED"]),
+});
+type AllocationEditValues = z.infer<typeof allocationEditSchema>;
+
+function EditAllocationDialog({
+  allocation,
+  regions,
+  districts,
+  activities,
+  onClose,
+  onSaved,
+}: {
+  allocation: FuelAllocation;
+  regions: Region[];
+  districts: District[];
+  activities: CensusActivity[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { register, handleSubmit } = useForm<AllocationEditValues>({
+    resolver: zodResolver(allocationEditSchema),
+    defaultValues: {
+      region_id: allocation.region?.id ?? "",
+      district_id: allocation.district?.id ?? "",
+      activity_id: allocation.activity?.id ?? "",
+      fuel_type: allocation.fuel_type,
+      allocated_litres: allocation.allocated_litres,
+      allocated_budget: allocation.allocated_budget ?? undefined,
+      start_date: allocation.start_date,
+      end_date: allocation.end_date,
+      status: allocation.status,
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (values: AllocationEditValues) =>
+      api.put(`/fuel/allocations/${allocation.id}`, {
+        ...values,
+        region_id: values.region_id || undefined,
+        district_id: values.district_id || undefined,
+        activity_id: values.activity_id || undefined,
+      }),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Edit ${allocation.allocation_reference}`} className="max-w-xl">
+      <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="allocated_litres">Allocated litres</Label>
+            <Input id="allocated_litres" type="number" step="0.01" {...register("allocated_litres")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="fuel_type">Fuel type</Label>
+            <Select id="fuel_type" {...register("fuel_type")}>
+              <option value="DIESEL">Diesel</option>
+              <option value="PETROL">Petrol</option>
+            </Select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="allocated_budget">Budget (SLE, optional)</Label>
+            <Input id="allocated_budget" type="number" step="0.01" {...register("allocated_budget")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="status">Status</Label>
+            <Select id="status" {...register("status")}>
+              {["ACTIVE", "EXHAUSTED", "EXPIRED", "CLOSED"].map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5"><Label htmlFor="start_date">Start date</Label><Input id="start_date" type="date" {...register("start_date")} /></div>
+          <div className="space-y-1.5"><Label htmlFor="end_date">End date</Label><Input id="end_date" type="date" {...register("end_date")} /></div>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="region_id">Region</Label>
+            <Select id="region_id" {...register("region_id")}>
+              <option value="">National</option>
+              {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="district_id">District</Label>
+            <Select id="district_id" {...register("district_id")}>
+              <option value="">Unspecified</option>
+              {districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity_id">Activity</Label>
+            <Select id="activity_id" {...register("activity_id")}>
+              <option value="">Unspecified</option>
+              {activities.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </Select>
+          </div>
+        </div>
+        {updateMutation.error instanceof ApiError && <p className="text-xs text-red-600">{updateMutation.error.message}</p>}
+        <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+          {updateMutation.isPending ? "Saving..." : "Save changes"}
+        </Button>
+      </form>
+    </Dialog>
+  );
+}
+
 const voucherSchema = z.object({
   voucher_number: z.string().min(1, "Required"),
   value: z.coerce.number().optional(),
@@ -1325,6 +1858,8 @@ type VoucherValues = z.infer<typeof voucherSchema>;
 
 function VouchersTab({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingVoucher, setEditingVoucher] = useState<FuelVoucher | null>(null);
+  const [deletingVoucher, setDeletingVoucher] = useState<FuelVoucher | null>(null);
   const queryClient = useQueryClient();
 
   const vouchersQuery = useQuery({ queryKey: ["fuel-vouchers"], queryFn: () => api.get<FuelVoucher[]>("/fuel/vouchers") });
@@ -1375,15 +1910,23 @@ function VouchersTab({ canManage }: { canManage: boolean }) {
                 <TableCell><Badge variant={VOUCHER_STATUS_BADGE_VARIANT[v.status]}>{VOUCHER_STATUS_LABEL[v.status]}</Badge></TableCell>
                 {canManage && (
                   <TableCell>
-                    <Select
-                      value={v.status}
-                      onChange={(e) => statusMutation.mutate({ id: v.id, status: e.target.value as FuelVoucherStatus })}
-                      className="max-w-[140px]"
-                    >
-                      {(["AVAILABLE", "ISSUED", "REDEEMED", "CANCELLED", "LOST", "RECONCILED"] as const).map((s) => (
-                        <option key={s} value={s}>{VOUCHER_STATUS_LABEL[s]}</option>
-                      ))}
-                    </Select>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select
+                        value={v.status}
+                        onChange={(e) => statusMutation.mutate({ id: v.id, status: e.target.value as FuelVoucherStatus })}
+                        className="max-w-[140px]"
+                      >
+                        {(["AVAILABLE", "ISSUED", "REDEEMED", "CANCELLED", "LOST", "RECONCILED"] as const).map((s) => (
+                          <option key={s} value={s}>{VOUCHER_STATUS_LABEL[s]}</option>
+                        ))}
+                      </Select>
+                      <Button size="sm" variant="secondary" onClick={() => setEditingVoucher(v)}>
+                        <Pencil size={14} /> Edit
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => setDeletingVoucher(v)}>
+                        <Trash2 size={14} /> Delete
+                      </Button>
+                    </div>
                   </TableCell>
                 )}
               </TableRow>
@@ -1394,6 +1937,28 @@ function VouchersTab({ canManage }: { canManage: boolean }) {
           </TableBody>
         </Table>
       )}
+
+      {editingVoucher && (
+        <EditVoucherDialog
+          voucher={editingVoucher}
+          onClose={() => setEditingVoucher(null)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["fuel-vouchers"] });
+            setEditingVoucher(null);
+          }}
+        />
+      )}
+
+      {deletingVoucher && (
+        <ConfirmDeleteDialog
+          title={`Delete ${deletingVoucher.voucher_number}`}
+          description="This permanently removes the voucher record."
+          mutationFn={() => api.delete<DeleteResult>(`/fuel/vouchers/${deletingVoucher.id}`)}
+          onClose={() => setDeletingVoucher(null)}
+          onDeleted={() => queryClient.invalidateQueries({ queryKey: ["fuel-vouchers"] })}
+        />
+      )}
+
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="New fuel voucher">
         <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-4">
           <div className="space-y-1.5">
@@ -1423,6 +1988,65 @@ function VouchersTab({ canManage }: { canManage: boolean }) {
         </form>
       </Dialog>
     </div>
+  );
+}
+
+function EditVoucherDialog({
+  voucher,
+  onClose,
+  onSaved,
+}: {
+  voucher: FuelVoucher;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { register, handleSubmit } = useForm<VoucherValues>({
+    resolver: zodResolver(voucherSchema),
+    defaultValues: {
+      voucher_number: voucher.voucher_number,
+      value: voucher.value ?? undefined,
+      litres: voucher.litres ?? undefined,
+      assigned_asset_description: voucher.assigned_asset_description ?? "",
+      date_issued: voucher.date_issued ?? "",
+      remarks: voucher.remarks ?? "",
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (values: VoucherValues) =>
+      api.put(`/fuel/vouchers/${voucher.id}`, { ...values, date_issued: values.date_issued || undefined }),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog open onClose={onClose} title={`Edit ${voucher.voucher_number}`}>
+      <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="voucher_number">Voucher number</Label>
+          <Input id="voucher_number" {...register("voucher_number")} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5"><Label htmlFor="value">Value (SLE)</Label><Input id="value" type="number" step="0.01" {...register("value")} /></div>
+          <div className="space-y-1.5"><Label htmlFor="litres">Litres</Label><Input id="litres" type="number" step="0.01" {...register("litres")} /></div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="assigned_asset_description">Assigned to (asset / person)</Label>
+          <Input id="assigned_asset_description" placeholder="e.g. Vehicle SLG-1234" {...register("assigned_asset_description")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="date_issued">Date issued</Label>
+          <Input id="date_issued" type="date" {...register("date_issued")} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="remarks">Remarks</Label>
+          <Input id="remarks" {...register("remarks")} />
+        </div>
+        {updateMutation.error instanceof ApiError && <p className="text-xs text-red-600">{updateMutation.error.message}</p>}
+        <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+          {updateMutation.isPending ? "Saving..." : "Save changes"}
+        </Button>
+      </form>
+    </Dialog>
   );
 }
 
