@@ -373,27 +373,21 @@ def delete_allocation(
     allocation_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("fuel.manage")),
 ):
-    """Tries a real delete first; falls back to status=CLOSED if any fuel
-    request has drawn against it — same delete-or-deactivate shape used
-    elsewhere (delete_user, delete_station)."""
+    """Falls back to status=CLOSED instead of deleting if any fuel request
+    has ever drawn against this allocation — checked explicitly rather than
+    relying on IntegrityError, because FuelAllocation.requests is a
+    bidirectional relationship (back_populates="allocation"): SQLAlchemy's
+    default unit-of-work nulls out FuelRequest.allocation_id on delete
+    *before* issuing the DELETE, specifically to avoid tripping the FK
+    constraint, so the delete would otherwise silently succeed and erase
+    the historical link instead of raising anything to catch."""
     allocation = db.get(FuelAllocation, allocation_id)
     if not allocation:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fuel allocation not found.")
     reference = allocation.allocation_reference
 
-    try:
-        db.delete(allocation)
-        db.flush()
-        audit_service.record(
-            db, user_id=current_user.id, action="delete", entity_type="fuel_allocation", entity_id=str(allocation_id),
-            old_value={"reference": reference},
-            ip_address=client_ip(request), user_agent=client_user_agent(request),
-        )
-        db.commit()
-        return {"detail": f"Allocation {reference} deleted.", "hard_deleted": True}
-    except IntegrityError:
-        db.rollback()
-        allocation = db.get(FuelAllocation, allocation_id)
+    has_requests = db.scalar(select(FuelRequest.id).where(FuelRequest.allocation_id == allocation_id).limit(1))
+    if has_requests:
         previous_status = allocation.status
         allocation.status = "CLOSED"
         audit_service.record(
@@ -407,6 +401,15 @@ def delete_allocation(
             "detail": f"Allocation {reference} has requests against it, so it was closed instead of deleted.",
             "hard_deleted": False,
         }
+
+    db.delete(allocation)
+    audit_service.record(
+        db, user_id=current_user.id, action="delete", entity_type="fuel_allocation", entity_id=str(allocation_id),
+        old_value={"reference": reference},
+        ip_address=client_ip(request), user_agent=client_user_agent(request),
+    )
+    db.commit()
+    return {"detail": f"Allocation {reference} deleted.", "hard_deleted": True}
 
 
 # ---------------------------------------------------------------- requests
