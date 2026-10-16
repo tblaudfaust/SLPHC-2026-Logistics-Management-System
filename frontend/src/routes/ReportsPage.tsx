@@ -378,6 +378,9 @@ export function ReportsPage() {
                     <p className="font-medium text-slate-500">Statistics Sierra Leone (Stats SL)</p>
                     <p>A.J. Momoh Street / Tower Hill, P.M.B. 595, Freetown, Sierra Leone</p>
                     <p>E: info@statistics.sl &middot; T: +232-78-208595 / 30-593333 &middot; W: www.statistics.sl</p>
+                    <p className="mt-1 font-medium text-slate-500">
+                      SLPHC 2026 Logistics Management System &middot; Developed by Statistics Sierra Leone
+                    </p>
                   </footer>
                 </CardContent>
               </Card>

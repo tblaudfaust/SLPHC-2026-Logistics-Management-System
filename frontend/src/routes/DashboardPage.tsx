@@ -262,21 +262,6 @@ export function DashboardPage() {
         </>
       )}
 
-      <footer className="mt-8 border-t border-slate-200 pt-4 text-center text-xs text-slate-400">
-        <p className="font-medium text-slate-500">Statistics Sierra Leone (Stats SL)</p>
-        <p>A.J. Momoh Street / Tower Hill, P.M.B. 595, Freetown, Sierra Leone</p>
-        <p>
-          E: info@statistics.sl &middot; T: +232-78-208595 / 30-593333 &middot;{" "}
-          <a
-            href="https://www.statistics.sl"
-            target="_blank"
-            rel="noreferrer"
-            className="text-brand-600 hover:underline"
-          >
-            www.statistics.sl
-          </a>
-        </p>
-      </footer>
     </div>
   );
 }

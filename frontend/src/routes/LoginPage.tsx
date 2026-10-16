@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
+import { AppFooter } from "@/components/layout/AppFooter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -115,6 +116,7 @@ export function LoginPage() {
         className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-brand-950"
         aria-hidden="true"
       />
+      <AppFooter tone="dark" className="absolute inset-x-0 bottom-0 z-10" />
       <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
         <div className="mb-8 flex flex-col items-center text-center">
           <img
